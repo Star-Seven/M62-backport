@@ -77,6 +77,8 @@ enum {
 	POLICYDB_CAPABILITY_ALWAYSNETWORK,
 	POLICYDB_CAPABILITY_CGROUPSECLABEL,
 	POLICYDB_CAPABILITY_NNP_NOSUID_TRANSITION,
+	/* Keep the upstream/libsepol index; capabilities 6-8 are not implemented. */
+	POLICYDB_CAPABILITY_NETLINK_XPERM = 9,
 	__POLICYDB_CAPABILITY_MAX
 };
 #define POLICYDB_CAPABILITY_MAX (__POLICYDB_CAPABILITY_MAX - 1)
@@ -183,6 +185,11 @@ static inline bool selinux_android_nlroute_getlink(void)
 	struct selinux_state *state = &selinux_state;
 
 	return state->android_netlink_route;
+}
+
+static inline bool selinux_policycap_netlink_xperm(void)
+{
+	return selinux_state.policycap[POLICYDB_CAPABILITY_NETLINK_XPERM];
 }
 
 static inline bool selinux_android_nlroute_getneigh(void)

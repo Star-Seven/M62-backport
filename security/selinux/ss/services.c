@@ -83,7 +83,8 @@ const char *selinux_policycap_names[__POLICYDB_CAPABILITY_MAX] = {
 	"extended_socket_class",
 	"always_check_network",
 	"cgroup_seclabel",
-	"nnp_nosuid_transition"
+	"nnp_nosuid_transition",
+	[POLICYDB_CAPABILITY_NETLINK_XPERM] = "netlink_xperm"
 };
 
 static struct selinux_ss selinux_ss;
@@ -595,7 +596,7 @@ static void type_attribute_bounds_av(struct policydb *policydb,
 
 /*
  * flag which drivers have permissions
- * only looking for ioctl based extended permssions
+ * Support ioctl and netlink message extended permissions.
  */
 void services_compute_xperms_drivers(
 		struct extended_perms *xperms,
@@ -607,13 +608,14 @@ void services_compute_xperms_drivers(
 		/* if one or more driver has all permissions allowed */
 		for (i = 0; i < ARRAY_SIZE(xperms->drivers.p); i++)
 			xperms->drivers.p[i] |= node->datum.u.xperms->perms.p[i];
-	} else if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+	} else if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION ||
+		   node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
 		/* if allowing permissions within a driver */
 		security_xperm_set(xperms->drivers.p,
 					node->datum.u.xperms->driver);
 	}
 
-	/* If no ioctl commands are allowed, ignore auditallow and auditdeny */
+	/* If no extended commands are allowed, ignore auditallow and auditdeny. */
 	if (node->key.specified & AVTAB_XPERMS_ALLOWED)
 		xperms->len = 1;
 }
@@ -963,7 +965,8 @@ void services_compute_xperms_decision(struct extended_perms_decision *xpermd,
 {
 	unsigned int i;
 
-	if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+	if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION ||
+	    node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
 		if (xpermd->driver != node->datum.u.xperms->driver)
 			return;
 	} else if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLDRIVER) {
@@ -980,7 +983,8 @@ void services_compute_xperms_decision(struct extended_perms_decision *xpermd,
 			memset(xpermd->allowed->p, 0xff,
 					sizeof(xpermd->allowed->p));
 		}
-		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION ||
+		    node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
 			for (i = 0; i < ARRAY_SIZE(xpermd->allowed->p); i++)
 				xpermd->allowed->p[i] |=
 					node->datum.u.xperms->perms.p[i];
@@ -991,7 +995,8 @@ void services_compute_xperms_decision(struct extended_perms_decision *xpermd,
 			memset(xpermd->auditallow->p, 0xff,
 					sizeof(xpermd->auditallow->p));
 		}
-		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION ||
+		    node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
 			for (i = 0; i < ARRAY_SIZE(xpermd->auditallow->p); i++)
 				xpermd->auditallow->p[i] |=
 					node->datum.u.xperms->perms.p[i];
@@ -1002,7 +1007,8 @@ void services_compute_xperms_decision(struct extended_perms_decision *xpermd,
 			memset(xpermd->dontaudit->p, 0xff,
 					sizeof(xpermd->dontaudit->p));
 		}
-		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+		if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION ||
+		    node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
 			for (i = 0; i < ARRAY_SIZE(xpermd->dontaudit->p); i++)
 				xpermd->dontaudit->p[i] |=
 					node->datum.u.xperms->perms.p[i];
@@ -2111,13 +2117,17 @@ static void security_load_policycaps(struct selinux_state *state)
 	for (i = 0; i < ARRAY_SIZE(state->policycap); i++)
 		state->policycap[i] = ebitmap_get_bit(&p->policycaps, i);
 
-	for (i = 0; i < ARRAY_SIZE(selinux_policycap_names); i++)
+	for (i = 0; i < ARRAY_SIZE(selinux_policycap_names); i++) {
+		if (!selinux_policycap_names[i])
+			continue;
 		pr_info("SELinux:  policy capability %s=%d\n",
 			selinux_policycap_names[i],
 			ebitmap_get_bit(&p->policycaps, i));
+	}
 
 	ebitmap_for_each_positive_bit(&p->policycaps, node, i) {
-		if (i >= ARRAY_SIZE(selinux_policycap_names))
+		if (i >= ARRAY_SIZE(selinux_policycap_names) ||
+		    !selinux_policycap_names[i])
 			pr_info("SELinux:  unknown policy capability %u\n",
 				i);
 	}
