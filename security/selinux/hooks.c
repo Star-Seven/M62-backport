@@ -5401,6 +5401,26 @@ static int selinux_tun_dev_open(void *security)
 	return 0;
 }
 
+/* Backport of upstream d1d991efaf34606d500dcbd28bedc0666eeec8e2. */
+static int nlmsg_sock_has_extended_perms(struct sock *sk, u32 perms,
+				       u16 nlmsg_type)
+{
+	struct sk_security_struct *sksec = sk->sk_security;
+	struct common_audit_data ad;
+	struct lsm_network_audit net = {0,};
+
+	if (sksec->sid == SECINITSID_KERNEL)
+		return 0;
+
+	ad.type = LSM_AUDIT_DATA_NET;
+	ad.u.net = &net;
+	ad.u.net->sk = sk;
+
+	return avc_has_extended_perms(&selinux_state, current_sid(),
+				      sksec->sid, sksec->sclass, perms,
+				      nlmsg_type >> 8, nlmsg_type & 0xff, &ad);
+}
+
 static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 {
 	int rc = 0;
@@ -5426,7 +5446,11 @@ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 
 		rc = selinux_nlmsg_lookup(sclass, nlh->nlmsg_type, &perm);
 		if (rc == 0) {
-			rc = sock_has_perm(sk, perm);
+			if (selinux_policycap_netlink_xperm())
+				rc = nlmsg_sock_has_extended_perms(sk, perm,
+							  nlh->nlmsg_type);
+			else
+				rc = sock_has_perm(sk, perm);
 			if (rc)
 				return rc;
 		} else if (rc == -EINVAL) {
