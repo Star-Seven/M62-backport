@@ -65,7 +65,7 @@ jobs:
            # cd ./KernelSU
            # patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || { echo "Failed to apply patch"; exit 1; }
            # cd ..
-           
+           patch -p1 --verbose < susfs4ksu-repo/kernel_patches/kernel-4.14.patch
            patch -p1 --verbose < susfs4ksu-repo/kernel_patches/50_add_susfs_in_kernel-4.14.patch
            echo "Successfully applied susfs-rksu-master patches"
 
