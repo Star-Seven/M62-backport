@@ -2,12 +2,30 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+        type: string
+      merge_releases:
+        description: 'Merge all kernel variants into a single release'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  MERGE_RELEASES: ${{ github.event.inputs.merge_releases }}
 
 jobs:
   build:
     strategy:
       matrix:
         device: [d1, d1xks, d2x, d2s, d2xks]
+        ksu_branch: ['susfs-rksu-master', 'rksu', 'kernelsu-next']
     runs-on: ubuntu-24.04
 
     steps:
@@ -28,36 +46,358 @@ jobs:
 
       - name: "💡 Setup KernelSu"
         run: |
-          if [ -d "./KernelSU-Next" ]; then rm -rf "./KernelSU-Next"; fi
-          if [ -d "./drivers/KernelSU-Next" ]; then rm -rf "./drivers/KernelSU-Next"; fi 
-          curl -LSs "https://raw.githubusercontent.com/Star-Seven/KernelSU-Next/next/kernel/setup.sh" | bash -
+          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
+          if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi 
 
-      - name: "😄 Setup and Apply susfs4ksu Patches"
+          if [ "${{ matrix.ksu_branch }}" = "susfs-rksu-master" ]; then
+            echo "🔧 Using susfs-rksu-master branch for KernelSU"
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s susfs-rksu-master
+          elif [ "${{ matrix.ksu_branch }}" = "kernelsu-next" ]; then
+            echo "🔧 Using kernelsu-next (legacy) for KernelSU"
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          else
+            echo "🔧 Using rksu branch for KernelSU"
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+
+      - name: "📥 Clone susfs4ksu repository"
+        run: |
+          git clone https://github.com/Star-Seven/susfs4ksu -b M62-backport-Susfs susfs4ksu-repo
+
+      - name: "🔧 Apply susfs-rksu-master patches"
+        if: ${{ matrix.ksu_branch == 'susfs-rksu-master' }}
         run: |
            set -e
 
-           # Backport SUSFS to Linux 4.14
-           git clone https://github.com/Star-Seven/susfs4ksu -b M62-backport-Susfs susfs4ksu-repo
-
-           cp susfs4ksu-repo/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
+           echo "Applying susfs-rksu-master specific patches..."
            cp susfs4ksu-repo/kernel_patches/fs/* fs/
            cp susfs4ksu-repo/kernel_patches/include/linux/* include/linux/
-           cd ./KernelSU-Next
-           patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || { echo "Failed to apply patch"; exit 1; }
-           cd ..
+           
+           patch -p1 --verbose < susfs4ksu-repo/kernel_patches/kernel-4.14.patch
            patch -p1 --verbose < susfs4ksu-repo/kernel_patches/50_add_susfs_in_kernel-4.14.patch
-           echo "Successfully applied susfs4ksu patches"
+           echo "Successfully applied susfs-rksu-master patches"
+
+      - name: "🔧 Apply rksu branch patches"
+        if: ${{ matrix.ksu_branch == 'rksu' || matrix.ksu_branch == 'kernelsu-next' }}
+        run: |
+           set -e
+           
+           echo "Applying rksu branch specific patches..."
+           patch -p1 --verbose < susfs4ksu-repo/kernel_patches/kernel-4.14.patch
+           echo "Successfully applied rksu branch patches"
 
       - name: "🐎Build for specific device"
         run: ./build.sh -m ${{ matrix.device }} -k Y -r N
 
-      - name: "💫Prepare ZIP files for upload"
+      - name: "💫Rename and prepare files for upload"
         run: |
-          mkdir -p ${{ github.workspace }}/build/out/zip_files
-          find ${{ github.workspace }}/build/out/ -type f -name "*.zip" -exec cp {} ${{ github.workspace }}/build/out/zip_files/ \;
+          # Search for build artifacts
+          echo "Searching for build artifacts..."
+          
+          # First, find the device-specific output directory
+          BUILD_OUT_DIR="/home/runner/work/M62-backport/M62-backport/build/out/${{ matrix.device }}"
+          echo "Looking in: $BUILD_OUT_DIR"
+          
+          # Create upload directory
+          UPLOAD_DIR="${{ github.workspace }}/upload"
+          mkdir -p "$UPLOAD_DIR"
+          
+          # Find zip files in the device output directory
+          zip_files=($(find "$BUILD_OUT_DIR" -maxdepth 1 -name "*.zip" -type f 2>/dev/null))
+          
+          if [ ${#zip_files[@]} -eq 0 ]; then
+            echo "No zip files found in $BUILD_OUT_DIR"
+            echo "Trying alternative location: /home/runner/work/M62-backport/M62-backport/build/out/"
+            zip_files=($(find "/home/runner/work/M62-backport/M62-backport/build/out" -name "*.zip" -type f 2>/dev/null))
+          fi
+          
+          if [ ${#zip_files[@]} -eq 0 ]; then
+            echo "Warning: No zip files found anywhere!"
+            exit 0
+          fi
+          
+          echo "Found ${#zip_files[@]} zip file(s)"
+          
+          # Process each zip file
+          for zip_file in "${zip_files[@]}"; do
+            if [ -f "$zip_file" ]; then
+              # Extract base filename
+              base_name=$(basename "$zip_file")
+              echo "Processing: $base_name"
+              
+              # Determine branch identifier suffix
+              case "${{ matrix.ksu_branch }}" in
+                "susfs-rksu-master")
+                  branch_suffix="Susfs"
+                  ;;
+                "rksu")
+                  branch_suffix="rksu"
+                  ;;
+                "kernelsu-next")
+                  branch_suffix="KSU-Next"
+                  ;;
+                *)
+                  branch_suffix="Unknown"
+                  ;;
+              esac
+              
+              # Create simplified name: ExtremeKRNL-{branch}-{device}.zip
+              simple_name="ExtremeKRNL-${branch_suffix}-${{ matrix.device }}.zip"
+              
+              echo "Creating simplified name: $simple_name"
+              
+              # Copy with simplified name ONLY
+              cp "$zip_file" "$UPLOAD_DIR/$simple_name"
+            fi
+          done
+          
+          echo "Upload directory contents:"
+          ls -la "$UPLOAD_DIR/" || echo "Upload directory is empty"
 
-      - name: "😎Upload ZIP files as artifact"
+      - name: "😎Upload build artifacts"
         uses: actions/upload-artifact@v4
         with:
-         name: "ExtremeKRNL-Nexus-Susfs-${{ matrix.device }}"
-         path: ${{ github.workspace }}/build/out/zip_files/
+          name: kernel-builds-${{ matrix.ksu_branch }}-${{ matrix.device }}
+          path: ${{ github.workspace }}/upload/*.zip
+        if: success()
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: github.event.inputs.tag != ''
+    
+    steps:
+      - name: "⭐Download all build artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: "📦Organize artifacts by branch"
+        run: |
+          echo "📁 Current artifacts directory structure:"
+          find artifacts -type f -name "*.zip" 2>/dev/null | sort || echo "No files found"
+          
+          # Create classification directories
+          mkdir -p artifacts/susfs-rksu-master
+          mkdir -p artifacts/rksu
+          mkdir -p artifacts/kernelsu-next
+          
+          echo ""
+          echo "📦 Starting file classification..."
+          
+          total_files=0
+          classified_files=0
+          
+          # Find and classify all zip files
+          for file in $(find artifacts -type f -name "*.zip" 2>/dev/null); do
+            total_files=$((total_files + 1))
+            filename=$(basename "$file")
+            
+            # Classify based on filename patterns
+            if echo "$filename" | grep -q "_UNOFFICIAL_Susfs_" || echo "$filename" | grep -qi "Susfs"; then
+              mv "$file" artifacts/susfs-rksu-master/ 2>/dev/null
+              echo "✓ $filename → susfs-rksu-master"
+              classified_files=$((classified_files + 1))
+            elif echo "$filename" | grep -q "_UNOFFICIAL_rksu_" || echo "$filename" | grep -qi -E "rksu[^a-zA-Z]"; then
+              mv "$file" artifacts/rksu/ 2>/dev/null
+              echo "✓ $filename → rksu"
+              classified_files=$((classified_files + 1))
+            elif echo "$filename" | grep -q "_UNOFFICIAL_KSU-Next_" || echo "$filename" | grep -qi "KSU-Next"; then
+              mv "$file" artifacts/kernelsu-next/ 2>/dev/null
+              echo "✓ $filename → kernelsu-next"
+              classified_files=$((classified_files + 1))
+            else
+              echo "⚠️  Cannot classify: $filename"
+              # Check for simple naming pattern
+              if echo "$filename" | grep -q "ExtremeKRNL-Susfs-"; then
+                mv "$file" artifacts/susfs-rksu-master/ 2>/dev/null
+                echo "✓ $filename → susfs-rksu-master (simple pattern)"
+                classified_files=$((classified_files + 1))
+              elif echo "$filename" | grep -q "ExtremeKRNL-rksu-"; then
+                mv "$file" artifacts/rksu/ 2>/dev/null
+                echo "✓ $filename → rksu (simple pattern)"
+                classified_files=$((classified_files + 1))
+              elif echo "$filename" | grep -q "ExtremeKRNL-KSU-Next-"; then
+                mv "$file" artifacts/kernelsu-next/ 2>/dev/null
+                echo "✓ $filename → kernelsu-next (simple pattern)"
+                classified_files=$((classified_files + 1))
+              else
+                echo "✗ $filename → unclassified"
+              fi
+            fi
+          done
+          
+          echo ""
+          echo "📊 Classification completed:"
+          echo "Total files found: $total_files"
+          echo "Successfully classified: $classified_files"
+          
+          # Check file count in each directory
+          for branch_dir in susfs-rksu-master rksu kernelsu-next; do
+            file_count=$(ls -1 artifacts/$branch_dir/*.zip 2>/dev/null | wc -l || echo 0)
+            echo ""
+            echo "$branch_dir: $file_count files"
+            if [ "$file_count" -gt 0 ]; then
+              ls -1 artifacts/$branch_dir/*.zip 2>/dev/null
+            else
+              echo "  (no files)"
+            fi
+          done
+      
+      # Option 1: Merged release (single release for all variants)
+      - name: "❤️ Create merged release (all variants)"
+        if: env.MERGE_RELEASES == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "merged-${{ github.event.inputs.tag }}"
+          name: "KernelSU-All-Variants-${{ github.event.inputs.tag }}"
+          draft: false
+          prerelease: false        
+          artifacts: "artifacts/**/*.zip"
+          body: |
+            ## KernelSU All Variants - Combined Release
+            
+            **Build Information:**
+            - Commit SHA: ${{ github.sha }}
+            
+            **Included Kernel Variants:**
+            1. **Susfs-rksu-master** - With SuSFS patches
+            2. **rksu** - Standard KernelSU main branch  
+            3. **KernelSU-Next** - KernelSU Next (legacy)
+            
+            **Supported Devices:**
+            - d1, d1xks, d2x, d2s, d2xks
+            
+            **Installation Guide:**
+            
+            **For Susfs-rksu-master kernels:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Manager from: [KernelSU Releases](https://github.com/rsuntk/KernelSU/releases)
+            3. **[Optional]** For SuSFS functionality, install SuSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+            
+            **For rksu kernels:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Manager from: [KernelSU Releases](https://github.com/rsuntk/KernelSU/releases)
+            
+            **For KernelSU-Next kernels:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
+            3. **[Optional]** For SuSFS functionality, install SuSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+            
+            **Note:**
+            - Choose the appropriate kernel variant for your needs
+            - Make sure to use the correct KernelSU manager for each variant
+        continue-on-error: true
+      
+      # Option 2: Separate releases (one for each variant)
+      - name: "❤️ Create release for susfs-rksu-master"
+        if: env.MERGE_RELEASES != 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "susfs-rksu-master-${{ github.event.inputs.tag }}"
+          name: "KernelSU-Susfs-${{ github.event.inputs.tag }}"
+          draft: false
+          prerelease: false        
+          artifacts: "artifacts/susfs-rksu-master/*.zip"
+          body: |
+            ## KernelSU with SuSFS Module - susfs-rksu-master
+            
+            **Build Information:**
+            - Commit SHA: ${{ github.sha }}
+            - KernelSU Version: susfs-rksu-master
+            
+            **Supported Devices:**
+            - d1, d1xks, d2x, d2s, d2xks
+            
+            **Installation Guide:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Manager from: [KernelSU Releases](https://github.com/rsuntk/KernelSU/releases)
+            3. **[Optional]** For SuSFS functionality, install SuSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+            
+            **Note:**
+            - This version includes SuSFS patches
+            - SuSFS module installation is required for SuSFS functionality
+            - Make sure to use the correct KernelSU Manager version
+        continue-on-error: true
+        
+      - name: "❤️ Create release for rksu"
+        if: env.MERGE_RELEASES != 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "rksu-${{ github.event.inputs.tag }}"
+          name: "KernelSU-rksu-${{ github.event.inputs.tag }}"
+          draft: false
+          prerelease: false        
+          artifacts: "artifacts/rksu/*.zip"
+          body: |
+            ## KernelSU rksu Branch
+            
+            **Build Information:**
+            - Commit SHA: ${{ github.sha }}
+            - KernelSU Version: rksu (main)
+            
+            **Supported Devices:**
+            - d1, d1xks, d2x, d2s, d2xks
+            
+            **Installation Guide:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Manager from: [KernelSU Releases](https://github.com/rsuntk/KernelSU/releases)
+            
+            **Note:**
+            - This version uses the rksu (main) branch of KernelSU
+            - No SuSFS patches included
+            - No additional modules required
+        continue-on-error: true
+        
+      - name: "❤️ Create release for kernelsu-next"
+        if: env.MERGE_RELEASES != 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "kernelsu-next-${{ github.event.inputs.tag }}"
+          name: "KernelSU-Next-${{ github.event.inputs.tag }}"
+          draft: false
+          prerelease: false        
+          artifacts: "artifacts/kernelsu-next/*.zip"
+          body: |
+            ## KernelSU Next (Legacy)
+            
+            **Build Information:**
+            - Commit SHA: ${{ github.sha }}
+            - KernelSU Version: KernelSU-Next (legacy)
+            
+            **Supported Devices:**
+            - d1, d1xks, d2x, d2s, d2xks
+            
+            **Installation Guide:**
+            1. Flash the kernel zip file for your device
+            2. Download and install KernelSU Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
+            3. **[Optional]** For SuSFS functionality, install SuSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+            
+            **Note:**
+            - This version uses KernelSU-Next (legacy)
+            - Requires KernelSU Next Manager
+            - SuSFS module is optional
+        continue-on-error: true
+        
+      - name: "📋Release summary"
+        run: |
+          echo "🎉 Release process completed"
+          echo "======================"
+          
+          if [ "$MERGE_RELEASES" = "true" ]; then
+            echo "Release type: Merged (all variants in one release)"
+            echo "Release tag: merged-${{ github.event.inputs.tag }}"
+          else
+            echo "Release type: Separate (one release per variant)"
+            echo "Release tags:"
+            echo "1. susfs-rksu-master-${{ github.event.inputs.tag }}"
+            echo "2. rksu-${{ github.event.inputs.tag }}"
+            echo "3. kernelsu-next-${{ github.event.inputs.tag }}"
+          fi
+          
+          echo ""
+          echo "File statistics by variant:"
+          for branch_dir in susfs-rksu-master rksu kernelsu-next; do
+            count=$(find artifacts/$branch_dir -name "*.zip" -type f 2>/dev/null | wc -l || echo 0)
+            echo "- $branch_dir: $count files"
+          done
