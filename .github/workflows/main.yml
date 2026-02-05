@@ -1,0 +1,93 @@
+name: Just for test
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_branch:
+        description: 'Choose KernelSU version'
+        required: true
+        default: 'susfs-rksu-master'
+        type: choice
+        options:
+          - 'susfs-rksu-master'
+          - 'main'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        device: [d1, d1xks, d2x, d2s, d2xks]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: "⏰Set Time Zone to Beijing"
+        run: |
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: "🚄Set up build environment"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core flex bison build-essential zip curl \
+          zlib1g-dev libc6-dev-i386 lib32z1-dev unzip
+
+      - name: "⭐Checkout repository with submodules"
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: "💡 Setup KernelSu"
+        run: |
+          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
+          if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi 
+
+          if [ "${{ github.event.inputs.ksu_branch }}" = "susfs-rksu-master" ]; then
+            echo "🔧 Using susfs-rksu-master branch for KernelSU"
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s susfs-rksu-master
+          else
+            echo "🔧 Using main branch for KernelSU"
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+
+      - name: "📥 Clone susfs4ksu repository"
+        run: |
+          git clone https://github.com/Star-Seven/susfs4ksu -b New-Susfs susfs4ksu-repo
+
+      - name: "🔧 Apply susfs-rksu-master patches"
+        if: ${{ github.event.inputs.ksu_branch == 'susfs-rksu-master' }}
+        run: |
+           set -e
+
+           echo "Applying susfs-rksu-master specific patches..."
+           # cp susfs4ksu-repo/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+           cp susfs4ksu-repo/kernel_patches/fs/* fs/
+           cp susfs4ksu-repo/kernel_patches/include/linux/* include/linux/
+           
+           # cd ./KernelSU
+           # patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || { echo "Failed to apply patch"; exit 1; }
+           # cd ..
+           patch -p1 --verbose < susfs4ksu-repo/kernel_patches/kernel-4.14.patch
+           patch -p1 --verbose < susfs4ksu-repo/kernel_patches/50_add_susfs_in_kernel-4.14.patch
+           echo "Successfully applied susfs-rksu-master patches"
+
+      - name: "🔧 Apply main branch patches"
+        if: ${{ github.event.inputs.ksu_branch == 'main' }}
+        run: |
+           set -e
+           
+           # echo "Applying main branch specific patches..."
+           # patch -p1 --verbose < susfs4ksu-repo/kernel_patches/kernel-4.14.patch
+           # echo "Successfully applied main branch patches"
+
+      - name: "🐎Build for specific device"
+        run: ./build.sh -m ${{ matrix.device }} -k Y -r N
+
+      - name: "💫Prepare ZIP files for upload"
+        run: |
+          mkdir -p ${{ github.workspace }}/build/out/zip_files
+          find ${{ github.workspace }}/build/out/ -type f -name "*.zip" -exec cp {} ${{ github.workspace }}/build/out/zip_files/ \;
+
+      - name: "😎Upload ZIP files as artifact"
+        uses: actions/upload-artifact@v4
+        with:
+         name: "ExtremeKRNL-Quant-${{ github.event.inputs.ksu_branch == 'susfs-rksu-master' && 'Susfs' || 'Regular' }}-${{ matrix.device }}"
+         path: ${{ github.workspace }}/build/out/zip_files/
