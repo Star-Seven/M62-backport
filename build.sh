@@ -115,10 +115,6 @@ d2xks)
     exit
 esac
 
-if [[ "$MODEL" == "d2xks" ]]; then
-    MODEL=d2x
-fi
-
 if [[ "$RECOVERY_OPTION" == "y" ]]; then
     RECOVERY=recovery.config
     KSU_OPTION=n
@@ -172,7 +168,7 @@ BASE=0x10000000
 CMDLINE='loop.max_part=7'
 HASHTYPE=sha1
 HEADER_VERSION=1
-OS_PATCH_LEVEL=2025-08
+OS_PATCH_LEVEL=2026-02
 OS_VERSION=16.0.0
 PAGESIZE=2048
 RAMDISK=build/out/$MODEL/ramdisk.cpio.gz
