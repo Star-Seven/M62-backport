@@ -151,7 +151,7 @@ cp build/updater-script "$UNIFIED_OUT/META-INF/com/google/android/updater-script
 # Final ZIP
 DATE=`date +"%d-%m-%Y_%H-%M-%S"`
 version=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
-[[ "$KSU_OPTION" == "y" ]] && ZIP_NAME="ExtremeKRNL_${version}_Unified_KSU_${DATE}.zip" || ZIP_NAME="ExtremeKRNL_${version}_Unified_${DATE}.zip"
+[[ "$KSU_OPTION" == "y" ]] && ZIP_NAME="${version}_Unified_KSU_${DATE}.zip" || ZIP_NAME="ExtremeKRNL_${version}_Unified_${DATE}.zip"
 
 pushd "$UNIFIED_OUT" > /dev/null
 zip -r "../../$ZIP_NAME" . > /dev/null
