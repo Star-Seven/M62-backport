@@ -114,7 +114,7 @@ set_progress 0.9
 trap - EXIT
 ui_print " "
 ui_print "*****************************************************"
-ui_print "***            ExtremeKRNL  Installed            ***"
+ui_print "***            ExtremeKRNL  Installed             ***"
 ui_print "*****************************************************"
 ui_print " "
 set_progress 1
