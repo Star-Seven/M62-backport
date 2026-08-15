@@ -1,9 +1,11 @@
 name: Build and Release
+
 on:
   workflow_dispatch:
 
 jobs:
   build:
+    name: Build Original Kernel
     runs-on: ubuntu-24.04
     steps:
       - name: "⏰Set Time Zone to Beijing"
@@ -24,10 +26,9 @@ jobs:
         run: |
           if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
           if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
-          
+
           echo "🔧 Using KernelSU-Next"
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-
 
       - name: "🐎Build Unified Kernel Package"
         run: |
@@ -45,4 +46,66 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "ExtremeKRNL-Unified-Package"
+          path: ${{ github.workspace }}/upload/*.zip
+
+  build-droidspaces:
+    name: Build Droidspaces non-GKI Kernel
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "⏰Set Time Zone to Beijing"
+        run: |
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: "🚄Set up build environment"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core flex bison build-essential zip curl patch zlib1g-dev libc6-dev-i386 lib32z1-dev unzip xz-utils cpio
+
+      - name: "⭐Checkout repository with submodules"
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: "💡 Setup KernelSU-Next"
+        run: |
+          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
+          if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
+
+          echo "🔧 Using KernelSU-Next"
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+
+      - name: "🩹Apply compatible Droidspaces non-GKI patches"
+        run: |
+          git clone --depth=1 https://github.com/Star-Seven/Droidspaces-OSS.git droidspaces
+          PATCH_DIR="droidspaces/Documentation/resources/kernel-patches/non-GKI"
+
+          if [ -f net/netfilter/xt_qtaguid.c ]; then
+            patch -p1 < "$PATCH_DIR/01.fix_kernel_panic_in_xt_qtaguid.patch"
+          else
+            echo "Skipping patch 01: net/netfilter/xt_qtaguid.c is absent in this kernel tree."
+          fi
+
+          test -f kernel/cgroup/cgroup.c
+          patch -p1 < "$PATCH_DIR/02.fix_restore cgroup file prefix handling .patch"
+
+      - name: "⚙️Enable Droidspaces configuration"
+        run: |
+          sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+
+      - name: "🐎Build Droidspaces Kernel Package"
+        run: |
+          chmod +x build.sh
+          ./build.sh -m all -k y -r n
+
+      - name: "💫Prepare Droidspaces ZIP for upload"
+        run: |
+          mkdir -p ${{ github.workspace }}/upload
+          cp build/*.zip ${{ github.workspace }}/upload/
+          echo "=== Files in upload directory ==="
+          ls -la ${{ github.workspace }}/upload/
+
+      - name: "😎Upload Droidspaces ZIP as artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: "ExtremeKRNL-Droidspaces-non-GKI-Package"
           path: ${{ github.workspace }}/upload/*.zip
