@@ -22,13 +22,18 @@ jobs:
         with:
           submodules: true
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
           if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
           if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          echo "🔧 Using KernelSU-Next legacy-susfs-v230 from star-star-dev"
+          git clone https://github.com/star-star-dev/KernelSU-Next.git KernelSU-Next
+          cd KernelSU-Next
+          git fetch --all
+          git checkout origin/legacy-susfs-v230
+          cd ..
+          curl -LSs "https://raw.githubusercontent.com/star-star-dev/KernelSU-Next/legacy-susfs-v230/kernel/setup.sh" | bash -s origin/legacy-susfs-v230
 
       - name: "🐎Build Unified Kernel Package"
         run: |
@@ -66,13 +71,18 @@ jobs:
         with:
           submodules: true
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
           if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
           if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          echo "🔧 Using KernelSU-Next legacy-susfs-v230 from star-star-dev"
+          git clone https://github.com/star-star-dev/KernelSU-Next.git KernelSU-Next
+          cd KernelSU-Next
+          git fetch --all
+          git checkout origin/legacy-susfs-v230
+          cd ..
+          curl -LSs "https://raw.githubusercontent.com/star-star-dev/KernelSU-Next/legacy-susfs-v230/kernel/setup.sh" | bash -s origin/legacy-susfs-v230
 
       - name: "🩹Apply compatible Droidspaces non-GKI patches"
         run: |
