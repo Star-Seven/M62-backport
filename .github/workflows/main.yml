@@ -44,6 +44,8 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip Star7KRNL-Original-Unified.zip
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
@@ -51,7 +53,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "Star7KRNL-Unified-Package"
-          path: ${{ github.workspace }}/upload/*.zip
+          path: ${{ github.workspace }}/upload/Star7KRNL-Original-Unified.zip
 
   build-droidspaces:
     name: Build Droidspaces non-GKI Kernel
@@ -111,6 +113,8 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip Star7KRNL-Droidspaces.zip
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
@@ -118,4 +122,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "Star7KRNL-Droidspaces-non-GKI-Package"
-          path: ${{ github.workspace }}/upload/*.zip
+          path: ${{ github.workspace }}/upload/Star7KRNL-Droidspaces.zip
