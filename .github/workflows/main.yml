@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version tag (e.g. v2.4). Leave empty to read CONFIG_LOCALVERSION."
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -35,17 +40,30 @@ jobs:
           cd ..
           curl -LSs "https://raw.githubusercontent.com/star-star-dev/KernelSU-Next/legacy-susfs-v230/kernel/setup.sh" | bash -s origin/legacy-susfs-v230
 
+      - name: "🏷️Resolve package version"
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "Package version tag: $VER"
+
+
       - name: "🐎Build Unified Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Unified ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
           cd ${{ github.workspace }}/upload/
-          mv *.zip Star7KRNL-Original-Unified.zip
+          mv *.zip "Star7KRNL-Original-Unified-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
@@ -53,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "Star7KRNL-Unified-Package"
-          path: ${{ github.workspace }}/upload/Star7KRNL-Original-Unified.zip
+          path: ${{ github.workspace }}/upload/*.zip
 
   build-droidspaces:
     name: Build Droidspaces non-GKI Kernel
@@ -100,21 +118,35 @@ jobs:
           test -f kernel/cgroup/cgroup.c
           patch -p1 < "$PATCH_DIR/02.fix_restore cgroup file prefix handling .patch"
 
+      - name: "🏷️Resolve package version"
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "Package version tag: $VER"
+
       - name: "⚙️Enable Droidspaces configuration"
         run: |
-          sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          if ! grep -q 'droidspaces.config' build.sh; then
+            sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          fi
 
       - name: "🐎Build Droidspaces Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Droidspaces ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
           cd ${{ github.workspace }}/upload/
-          mv *.zip Star7KRNL-Droidspaces.zip
+          mv *.zip "Star7KRNL-Droidspaces-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
@@ -122,4 +154,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "Star7KRNL-Droidspaces-non-GKI-Package"
-          path: ${{ github.workspace }}/upload/Star7KRNL-Droidspaces.zip
+          path: ${{ github.workspace }}/upload/*.zip

@@ -17,6 +17,7 @@ Options:
     -m, --model [value]     Specify the model code (e.g. d2xks) or 'all'
     -k, --ksu [Y/n]         Include KernelSU
     -r, --recovery [y/N]    Compile kernel for an Android Recovery
+    -v, --version [value]   Package version tag (defaults to CONFIG_LOCALVERSION)
 EOF
 }
 
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
         --model|-m) SELECTED_MODEL="$2"; shift 2 ;;
         --ksu|-k) KSU_OPTION="$2"; shift 2 ;;
         --recovery|-r) RECOVERY_OPTION="$2"; shift 2 ;;
+        --version|-v) VERSION_OVERRIDE="$2"; shift 2 ;;
         *) unset_flags; exit 1 ;;
     esac
 done
@@ -59,6 +61,20 @@ RECOVERY_CONFIG=""
 if [[ "$RECOVERY_OPTION" == "y" ]]; then RECOVERY_CONFIG="recovery.config"; KSU_OPTION="n"; fi
 KSU_CONFIG=""
 if [[ "$KSU_OPTION" == "y" ]]; then KSU_CONFIG="ksu.config"; fi
+
+# Package version: explicit -v wins, else the kernel's CONFIG_LOCALVERSION
+if [ -n "$VERSION_OVERRIDE" ]; then
+    PKG_VERSION="$VERSION_OVERRIDE"
+else
+    PKG_VERSION=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+fi
+if [ -z "$PKG_VERSION" ]; then
+    echo "Error: could not determine package version (empty -v and no CONFIG_LOCALVERSION)."
+    exit 1
+fi
+# Drop a leading brand tag so the final name never doubles it.
+PKG_TAG="${PKG_VERSION#Star7KRNL-}"
+echo "Package version: $PKG_VERSION (tag: $PKG_TAG)"
 
 # Track compiled platforms
 COMPILED_9820=false
@@ -135,12 +151,12 @@ cp build/clone_header "$UNIFIED_OUT/"
 cp build/unxz "$UNIFIED_OUT/"
 # Use the update-binary from build/ as source if it exists, otherwise use a default
 if [ -f "build/update-binary" ]; then
-    cp build/update-binary "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
+    sed "s/@KSU_PKG_VERSION@/${PKG_TAG}/g" build/update-binary > "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
 else
     # Fallback: if user didn't provide update-binary in build/, we must ensure one exists.
     # But according to instructions, build/ is the source.
     echo "Warning: build/update-binary not found, using reference one."
-    cp META-INF/com/google/android/update-binary "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
+    sed "s/@KSU_PKG_VERSION@/${PKG_TAG}/g" META-INF/com/google/android/update-binary > "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
 fi
 
 # IMPORTANT: build/updater-script is the source for Edify logic.
@@ -150,8 +166,9 @@ cp build/updater-script "$UNIFIED_OUT/META-INF/com/google/android/updater-script
 
 # Final ZIP
 DATE=`date +"%d-%m-%Y_%H-%M-%S"`
-version=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
-[[ "$KSU_OPTION" == "y" ]] && ZIP_NAME="${version}_Unified_KSU_${DATE}.zip" || ZIP_NAME="ExtremeKRNL_${version}_Unified_${DATE}.zip"
+# Drop a leading brand tag so the final name never doubles it.
+PKG_TAG="${PKG_VERSION#Star7KRNL-}"
+ZIP_NAME="Star7KRNL-${PKG_TAG}_Unified_KSU_${DATE}.zip"
 
 pushd "$UNIFIED_OUT" > /dev/null
 zip -r "../../$ZIP_NAME" . > /dev/null
