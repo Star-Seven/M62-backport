@@ -42,10 +42,13 @@ jobs:
 
       - name: "🏷️Resolve package version"
         run: |
+          chmod +x kernel-version.sh
+          # Fail early if the version does not track the bundled susfs release.
+          ./kernel-version.sh check
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VER="${{ github.event.inputs.version }}"
           else
-            VER=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+            VER=$(./kernel-version.sh get)
           fi
           VER="${VER#Star7KRNL-}"
           if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
@@ -120,10 +123,13 @@ jobs:
 
       - name: "🏷️Resolve package version"
         run: |
+          chmod +x kernel-version.sh
+          # Fail early if the version does not track the bundled susfs release.
+          ./kernel-version.sh check
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VER="${{ github.event.inputs.version }}"
           else
-            VER=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+            VER=$(./kernel-version.sh get)
           fi
           VER="${VER#Star7KRNL-}"
           if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi

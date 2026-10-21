@@ -66,7 +66,7 @@ if [[ "$KSU_OPTION" == "y" ]]; then KSU_CONFIG="ksu.config"; fi
 if [ -n "$VERSION_OVERRIDE" ]; then
     PKG_VERSION="$VERSION_OVERRIDE"
 else
-    PKG_VERSION=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
+    PKG_VERSION=$(./kernel-version.sh get)
 fi
 if [ -z "$PKG_VERSION" ]; then
     echo "Error: could not determine package version (empty -v and no CONFIG_LOCALVERSION)."
