@@ -37,9 +37,9 @@ change anything else and the patch ticks up.
 `kernel-version.sh` is the only supported way to read it:
 
 ```
-./kernel-version.sh get        # Star7KRNL-Quant-v2.3.4
-./kernel-version.sh num        # v2.3.4
-./kernel-version.sh localver   # -Star7KRNL-Quant-v2.3.4 (make LOCALVERSION)
+./kernel-version.sh get        # e.g. Star7KRNL-Quant-v2.3.15
+./kernel-version.sh num        # e.g. v2.3.15
+./kernel-version.sh localver   # e.g. -Star7KRNL-Quant-v2.3.15 (make LOCALVERSION)
 ./kernel-version.sh check      # fail if MAJOR.MINOR != bundled SUSFS version
 ```
 
