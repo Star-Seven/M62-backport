@@ -98,3 +98,9 @@ The first run downloads a prebuilt clang toolchain into `toolchain/`.
   tracked already, so stage it with `git add -f` when modifying it.
 - Do not push to the default branch (`bpf111`) or to `main`; work on a feature
   branch.
+- Never put AI/agent attribution in commits: no `Co-authored-by: openhands`,
+  no `openhands@all-hands.dev` author/committer/tagger, no "generated with"
+  trailers. Use the repo's normal identity
+  (`star-star-dev <xingyuan53@qq.com>`). Automated attribution on a personal
+  account risks the account being flagged, so keep history indistinguishable
+  from the maintainer's own commits.
