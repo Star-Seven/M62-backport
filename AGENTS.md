@@ -23,7 +23,7 @@ The single source of truth for the released version is:
 
 ```
 arch/arm64/configs/exynos9820_defconfig:50
-CONFIG_LOCALVERSION="-Star7KRNL-Quant-v2.3.1"
+CONFIG_LOCALVERSION="-Star7KRNL-Quant-v2.3.2"
 ```
 
 Scheme: `Star7KRNL-Quant-v<MAJOR>.<MINOR>.<PATCH>`
@@ -36,10 +36,10 @@ Scheme: `Star7KRNL-Quant-v<MAJOR>.<MINOR>.<PATCH>`
 `kernel-version.sh` is the only supported way to read or change it:
 
 ```
-./kernel-version.sh get        # Star7KRNL-Quant-v2.3.1
-./kernel-version.sh num        # v2.3.1
+./kernel-version.sh get        # Star7KRNL-Quant-v2.3.2
+./kernel-version.sh num        # v2.3.2
 ./kernel-version.sh check      # fail if MAJOR.MINOR != bundled SUSFS version
-./kernel-version.sh bump       # v2.3.1 -> v2.3.2 (edits the defconfig)
+./kernel-version.sh bump       # v2.3.2 -> v2.3.3 (edits the defconfig)
 ./kernel-version.sh set v2.4.0 # set explicitly
 ```
 
@@ -61,6 +61,15 @@ CI enforces step 4: both jobs in `.github/workflows/main.yml` run
 `./kernel-version.sh check` in the "Resolve package version" step, so a SUSFS
 bump without a matching version bump fails the build early instead of shipping
 a stale version.
+
+The KernelSU-Next version the manager displays comes from the *other* repo. It
+reports `KSU_VERSION` (a versionCode the manager compares against its own) and
+`KSU_VERSION_TAG` (from `git describe --tags --abbrev=0`, so only tags
+reachable from `legacy-susfs-v230` count). When updating the submodule, confirm
+that branch carries its own release tag, e.g. `v3.4.2-legacy-susfs-v230`;
+without one, `describe` silently falls back to an older tag from a different
+release line and the manager shows a mismatched kernel version. The CI clone
+fetches tags, so a pushed tag resolves on the next build.
 
 `build.sh` and the workflow both call `kernel-version.sh`; do not reintroduce
 inline `grep`/`sed` parsing of `CONFIG_LOCALVERSION`.
