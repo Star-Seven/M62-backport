@@ -70,11 +70,13 @@ version.
 The KernelSU-Next version the manager displays comes from the *other* repo. It
 reports `KSU_VERSION` (a versionCode the manager compares against its own) and
 `KSU_VERSION_TAG` (from `git describe --tags --abbrev=0`, so only tags
-reachable from `legacy-susfs-v230` count). When updating the submodule, confirm
-that branch carries its own release tag, e.g. `v3.4.2-legacy-susfs-v230`;
-without one, `describe` silently falls back to an older tag from a different
-release line and the manager shows a mismatched kernel version. The CI clone
-fetches tags, so a pushed tag resolves on the next build.
+reachable from `legacy-susfs-v230` count). The tag is reported verbatim with no
+fork iteration appended, so it matches the upstream release it is based on.
+When updating the submodule, confirm that branch carries its own release tag,
+e.g. `v3.4.2-legacy-susfs-v230`; without one, `describe` silently falls back to
+an older tag from a different release line and the manager shows a mismatched
+kernel version. The CI clone fetches tags, so a pushed tag resolves on the next
+build.
 
 `build.sh` and the workflow both call `kernel-version.sh`; do not reintroduce
 inline `grep`/`sed` parsing of `CONFIG_LOCALVERSION`.
