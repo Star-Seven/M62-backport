@@ -62,19 +62,29 @@ if [[ "$RECOVERY_OPTION" == "y" ]]; then RECOVERY_CONFIG="recovery.config"; KSU_
 KSU_CONFIG=""
 if [[ "$KSU_OPTION" == "y" ]]; then KSU_CONFIG="ksu.config"; fi
 
-# Package version: explicit -v wins, else the kernel's CONFIG_LOCALVERSION
+# Package version: explicit -v wins, else derive it from the tree
 if [ -n "$VERSION_OVERRIDE" ]; then
     PKG_VERSION="$VERSION_OVERRIDE"
 else
     PKG_VERSION=$(./kernel-version.sh get)
 fi
 if [ -z "$PKG_VERSION" ]; then
-    echo "Error: could not determine package version (empty -v and no CONFIG_LOCALVERSION)."
+    echo "Error: could not determine package version (empty -v and no derivation)."
     exit 1
 fi
 # Drop a leading brand tag so the final name never doubles it.
 PKG_TAG="${PKG_VERSION#Star7KRNL-}"
 echo "Package version: $PKG_VERSION (tag: $PKG_TAG)"
+
+# Inject the version into uname -r at build time. CONFIG_LOCALVERSION holds only
+# the brand prefix ("-Star7KRNL-Quant"), so we append the version part alone;
+# appending the full branded string would duplicate the prefix. An explicit -v
+# is normalized the same way (with or without the brand/leading v).
+VER_PART="$PKG_VERSION"
+VER_PART="${VER_PART#Star7KRNL-Quant-}"
+VER_PART="${VER_PART#Star7KRNL-}"
+case "$VER_PART" in v*) ;; *) VER_PART="v$VER_PART" ;; esac
+BUILD_LOCALVERSION="-$VER_PART"
 
 # Track compiled platforms
 COMPILED_9820=false
@@ -104,7 +114,7 @@ for MODEL in "${MODELS_TO_BUILD[@]}"; do
     if [[ "$SOC" == "exynos9820" && "$COMPILED_9820" == false ]]; then SHOULD_COMPILE=true; fi
     if [[ "$SOC" == "exynos9825" && "$COMPILED_9825" == false ]]; then SHOULD_COMPILE=true; fi
 
-    MAKE_ARGS="LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out/$SOC"
+    MAKE_ARGS="LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out/$SOC LOCALVERSION=$BUILD_LOCALVERSION"
     if [ "$SHOULD_COMPILE" = true ]; then
         echo "Compiling for $SOC..."
         mkdir -p out/$SOC

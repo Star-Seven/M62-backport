@@ -19,48 +19,53 @@ is updated.
 
 ## Kernel and package versioning
 
-The single source of truth for the released version is:
-
-```
-arch/arm64/configs/exynos9820_defconfig:50
-CONFIG_LOCALVERSION="-Star7KRNL-Quant-v2.3.2"
-```
+The version is derived automatically at build time; there is no number to
+maintain by hand.
 
 Scheme: `Star7KRNL-Quant-v<MAJOR>.<MINOR>.<PATCH>`
 
-- `MAJOR.MINOR` mirrors the bundled SUSFS release (`include/linux/susfs.h`,
-  `SUSFS_VERSION`). SUSFS v2.3.0 → kernel version `v2.3.x`.
-- `PATCH` increments for each fork-side backport, adaptation, or repack that
-  does not change the SUSFS baseline.
+- `MAJOR.MINOR` mirrors the bundled SUSFS release, read from
+  `include/linux/susfs.h` (`SUSFS_VERSION`). SUSFS v2.3.0 → `v2.3.x`.
+- `PATCH` is the number of commits since `include/linux/susfs.h` last changed
+  (`git rev-list --count <last-susfs.h-commit>..HEAD`). Every adaptation,
+  backport, or repack raises it by one on its own; pulling a new SUSFS release
+  moves the baseline forward and PATCH restarts at 0 without any manual reset.
 
-`kernel-version.sh` is the only supported way to read or change it:
+So the version always matches reality: change SUSFS and the minor tracks it,
+change anything else and the patch ticks up.
+
+`kernel-version.sh` is the only supported way to read it:
 
 ```
-./kernel-version.sh get        # Star7KRNL-Quant-v2.3.2
-./kernel-version.sh num        # v2.3.2
+./kernel-version.sh get        # Star7KRNL-Quant-v2.3.4
+./kernel-version.sh num        # v2.3.4
+./kernel-version.sh localver   # -Star7KRNL-Quant-v2.3.4 (make LOCALVERSION)
 ./kernel-version.sh check      # fail if MAJOR.MINOR != bundled SUSFS version
-./kernel-version.sh bump       # v2.3.2 -> v2.3.3 (edits the defconfig)
-./kernel-version.sh set v2.4.0 # set explicitly
 ```
 
-### Rule: bump the version whenever you adapt SUSFS or KernelSU-Next
+`CONFIG_LOCALVERSION` in the defconfig holds only the brand prefix
+(`"-Star7KRNL-Quant"`). `build.sh` appends the derived `vX.Y.Z` through a make
+`LOCALVERSION=` override, so `uname -r` becomes
+`<kernelver>-Star7KRNL-Quant-vX.Y.Z` and the defconfig is never edited for a
+release. Because PATCH is a commit count, CI checks out with `fetch-depth: 0`.
 
-Any time upstream SUSFS or KernelSU-Next changes are backported into this tree,
-bump the version *in the same change* as the adaptation:
+### Rule: no manual bump; just commit
+
+Backporting SUSFS or KernelSU-Next changes needs no version edit:
 
 1. Update the `KernelSU` submodule to the new `legacy-susfs-v230` commit.
-2. Re-apply / fix the SUSFS and KernelSU glue for 4.14.
-3. Bump the version:
-   - SUSFS baseline changed (e.g. v2.3.0 → v2.4.0):
-     `./kernel-version.sh set v2.4.0`
-   - Only the fork adaptation changed: `./kernel-version.sh bump`
-4. Run `./kernel-version.sh check` and make sure it passes.
-5. Build and verify the reported version in `uname -r`.
+2. Re-apply / fix the SUSFS and KernelSU glue for 4.14 and commit.
+3. Run `./kernel-version.sh check` (CI does this too) and confirm the derived
+   version reads correctly; `get` should show the new PATCH level.
+4. Build and verify the reported version in `uname -r`.
 
-CI enforces step 4: both jobs in `.github/workflows/main.yml` run
+If a SUSFS release changes, `MAJOR.MINOR` follows `SUSFS_VERSION` automatically.
+Use the `version` workflow-dispatch input only to force an explicit tag.
+
+CI enforces step 3: both jobs in `.github/workflows/main.yml` run
 `./kernel-version.sh check` in the "Resolve package version" step, so a SUSFS
-bump without a matching version bump fails the build early instead of shipping
-a stale version.
+bump without a matching minor fails the build early instead of shipping a stale
+version.
 
 The KernelSU-Next version the manager displays comes from the *other* repo. It
 reports `KSU_VERSION` (a versionCode the manager compares against its own) and
@@ -85,7 +90,8 @@ Options:
 - `-m, --model` — model code (e.g. `d2xks`) or `all`
 - `-k, --ksu` — include KernelSU (`y`/`n`)
 - `-r, --recovery` — build for Android recovery
-- `-v, --version` — package version tag; defaults to `CONFIG_LOCALVERSION`
+- `-v, --version` — package version tag; defaults to the version derived from
+  the tree by `kernel-version.sh`
 
 The first run downloads a prebuilt clang toolchain into `toolchain/`.
 

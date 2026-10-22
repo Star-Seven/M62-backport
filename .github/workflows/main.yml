@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Package version tag (e.g. v2.4). Leave empty to read CONFIG_LOCALVERSION."
+        description: "Override the version tag (e.g. v2.3.4). Leave empty to derive it from the bundled SUSFS release plus the commit count."
         required: false
         default: ""
 
@@ -26,6 +26,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+          # The PATCH level is the commit count since susfs.h last changed,
+          # so the full history must be present.
+          fetch-depth: 0
 
       - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
@@ -43,12 +46,12 @@ jobs:
       - name: "🏷️Resolve package version"
         run: |
           chmod +x kernel-version.sh
-          # Fail early if the version does not track the bundled susfs release.
+          # Fail early if the derived version does not track the bundled susfs.
           ./kernel-version.sh check
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VER="${{ github.event.inputs.version }}"
           else
-            VER=$(./kernel-version.sh get)
+            VER=$(./kernel-version.sh num)
           fi
           VER="${VER#Star7KRNL-}"
           if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
@@ -93,6 +96,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+          # The PATCH level is the commit count since susfs.h last changed,
+          # so the full history must be present.
+          fetch-depth: 0
 
       - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
@@ -124,12 +130,12 @@ jobs:
       - name: "🏷️Resolve package version"
         run: |
           chmod +x kernel-version.sh
-          # Fail early if the version does not track the bundled susfs release.
+          # Fail early if the derived version does not track the bundled susfs.
           ./kernel-version.sh check
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VER="${{ github.event.inputs.version }}"
           else
-            VER=$(./kernel-version.sh get)
+            VER=$(./kernel-version.sh num)
           fi
           VER="${VER#Star7KRNL-}"
           if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi

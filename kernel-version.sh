@@ -2,24 +2,29 @@
 # Star7KRNL M62-backport kernel/package version helper.
 #
 # Scheme:  Star7KRNL-Quant-v<MAJOR>.<MINOR>.<PATCH>
-#   MAJOR.MINOR  tracks the bundled susfs release (include/linux/susfs.h SUSFS_VERSION)
-#   PATCH        increments on each fork-side backport/adaptation/repack
 #
-# The single source of truth is CONFIG_LOCALVERSION in
-# arch/arm64/configs/exynos9820_defconfig. It is read by the kernel build
-# (so it shows up in `uname -r`), by build.sh and by the release workflow.
+# Both axes are derived from the tree, so no manual bump is needed:
+#   MAJOR.MINOR  the bundled SUSFS release, read from
+#                include/linux/susfs.h (SUSFS_VERSION)
+#   PATCH        number of commits since include/linux/susfs.h last changed
+#
+# Because PATCH is counted from the last commit that touched susfs.h, pulling a
+# new SUSFS release moves the baseline forward and PATCH restarts at 0 on its
+# own. Every later adaptation/repack raises it by one. Nothing to remember.
+#
+# The version is injected into the kernel at build time as a make LOCALVERSION
+# override, so CONFIG_LOCALVERSION in the defconfig is only the brand prefix and
+# is never rewritten. `uname -r` ends up as <prefix>-vX.Y.Z.
 #
 # Usage:
-#   kernel-version.sh get            # print Star7KRNL-Quant-v2.3.1
-#   kernel-version.sh num            # print v2.3.1
-#   kernel-version.sh check          # fail if MAJOR.MINOR != bundled susfs version
-#   kernel-version.sh bump           # v2.3.1 -> v2.3.2
-#   kernel-version.sh set v2.4.0     # set explicitly
+#   kernel-version.sh get        # print Star7KRNL-Quant-v2.3.4
+#   kernel-version.sh num        # print v2.3.4
+#   kernel-version.sh localver   # print -Star7KRNL-Quant-v2.3.4 (make override)
+#   kernel-version.sh check      # sanity-check the derived version
 
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-DEFCONFIG="$ROOT/arch/arm64/configs/exynos9820_defconfig"
 SUSFS_HDR="$ROOT/include/linux/susfs.h"
 PREFIX="Star7KRNL-Quant-"
 
@@ -28,77 +33,57 @@ die() {
     exit 1
 }
 
-read_localversion() {
-    [ -f "$DEFCONFIG" ] || die "missing $DEFCONFIG"
-    lv=$(sed -n 's/^CONFIG_LOCALVERSION="\(.*\)"\r\{0,1\}$/\1/p' "$DEFCONFIG" | head -n1)
-    case "$lv" in
-        "-$PREFIX"v*) printf '%s\n' "${lv#-}" ;;
-        *) die "CONFIG_LOCALVERSION '$lv' does not start with '-$PREFIX'" ;;
-    esac
-}
-
-read_version() {
-    printf '%s\n' "${1#"$PREFIX"}"
-}
-
 read_susfs_version() {
     [ -f "$SUSFS_HDR" ] || die "missing $SUSFS_HDR"
     sed -n 's/^#define SUSFS_VERSION "v\{0,1\}\([0-9][0-9.]*\)"\r\{0,1\}$/\1/p' "$SUSFS_HDR" | head -n1
-}
-
-write_version() {
-    v=$1
-    tmp=$(mktemp)
-    # Preserve the file's CRLF line endings (the defconfig is CRLF throughout).
-    sed "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-$PREFIX$v\"\r|" "$DEFCONFIG" > "$tmp"
-    chmod 644 "$tmp"
-    mv "$tmp" "$DEFCONFIG"
 }
 
 major_minor() {
     printf '%s\n' "${1#v}" | cut -d. -f1,2
 }
 
+# Number of commits since the last change to susfs.h. Falls back to 0 when the
+# tree is not a git checkout (e.g. a source tarball), which keeps builds working.
+patch_level() {
+    command -v git >/dev/null 2>&1 || { echo 0; return; }
+    git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo 0; return; }
+    base=$(git -C "$ROOT" log -n1 --format=%H -- include/linux/susfs.h 2>/dev/null || true)
+    [ -n "$base" ] || { echo 0; return; }
+    git -C "$ROOT" rev-list --count "$base"..HEAD 2>/dev/null || echo 0
+}
+
+compute_version() {
+    susfs=$(read_susfs_version)
+    [ -n "$susfs" ] || die "could not read SUSFS_VERSION from $SUSFS_HDR"
+    printf 'v%s.%s\n' "$(major_minor "$susfs")" "$(patch_level)"
+}
+
 cmd=${1:-get}
 
 case "$cmd" in
     get)
-        read_localversion
+        printf '%s%s\n' "$PREFIX" "$(compute_version)"
         ;;
     num)
-        read_version "$(read_localversion)"
+        compute_version
+        ;;
+    localver)
+        printf '%s%s%s\n' "-" "$PREFIX" "$(compute_version)"
         ;;
     check)
-        ver=$(read_version "$(read_localversion)")
+        v=$(compute_version)
         susfs=$(read_susfs_version)
         [ -n "$susfs" ] || die "could not read SUSFS_VERSION from $SUSFS_HDR"
-        if [ "$(major_minor "$ver")" != "$(major_minor "$susfs")" ]; then
-            die "version $ver does not match bundled susfs $susfs (expected MAJOR.MINOR $(major_minor "$susfs"))"
+        case "$v" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) die "derived version '$v' is malformed" ;;
+        esac
+        if [ "$(major_minor "$v")" != "$(major_minor "$susfs")" ]; then
+            die "version $v does not match bundled susfs $susfs (expected MAJOR.MINOR $(major_minor "$susfs"))"
         fi
-        echo "version $ver matches bundled susfs $susfs"
-        ;;
-    bump)
-        ver=$(read_version "$(read_localversion)")
-        body=${ver#v}
-        major=$(printf '%s' "$body" | cut -d. -f1)
-        minor=$(printf '%s' "$body" | cut -d. -f2)
-        patch=$(printf '%s' "$body" | cut -d. -f3)
-        [ -n "$major" ] && [ -n "$minor" ] || die "malformed version '$ver'"
-        case "$patch" in ''|*[!0-9]*) patch=0 ;; esac
-        new="v$major.$minor.$((patch + 1))"
-        write_version "$new"
-        echo "$new"
-        ;;
-    set)
-        [ $# -eq 2 ] || die "set needs a version, e.g. set v2.4.0"
-        new=$2
-        case "$new" in v*) ;; *) new="v$new" ;; esac
-        printf '%s' "${new#v}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            || die "version must look like vX.Y.Z"
-        write_version "$new"
-        echo "$new"
+        echo "version $v matches bundled susfs $susfs"
         ;;
     *)
-        die "unknown command '$cmd' (use get|num|check|bump|set)"
+        die "unknown command '$cmd' (use get|num|localver|check)"
         ;;
 esac
