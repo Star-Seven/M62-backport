@@ -165,5 +165,5 @@ jobs:
       - name: "😎Upload Droidspaces ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "Star7KRNL-Droidspaces-non-GKI-Package"
+          name: "Star7KRNL-Droidspaces-Package"
           path: ${{ github.workspace }}/upload/*.zip
