@@ -33,8 +33,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# For a unified package, we build all models
-MODELS_TO_BUILD=("${SUPPORTED_MODELS[@]}")
+# For a unified package, we build all models unless one was requested
+if [ -n "$SELECTED_MODEL" ] && [ "$SELECTED_MODEL" != "all" ]; then
+    MODELS_TO_BUILD=("$SELECTED_MODEL")
+else
+    MODELS_TO_BUILD=("${SUPPORTED_MODELS[@]}")
+fi
 
 echo "Preparing the build environment..."
 
@@ -86,9 +90,14 @@ VER_PART="${VER_PART#Star7KRNL-}"
 case "$VER_PART" in v*) ;; *) VER_PART="v$VER_PART" ;; esac
 BUILD_LOCALVERSION="-$VER_PART"
 
-# Track compiled platforms
-COMPILED_9820=false
-COMPILED_9825=false
+# Per-SoC cache of the config fragment already compiled, so models that share a
+# fragment do not trigger a rebuild. Rebuilding for every model would be wasted
+# work, but using one fixed fragment for a whole SoC is wrong: the fragments
+# differ in symbols that must match the device (CONFIG_TZDEV_DEPLOY_OLD_TZAR
+# picks the TrustZone tzar the bootloader expects, and d2s/d1 need the old one).
+# Keying the cache on the fragment content keeps a single build per distinct
+# configuration.
+declare -A COMPILED_CONF=()
 
 # Directory for unified package output
 UNIFIED_OUT="build/out/unified"
@@ -110,18 +119,18 @@ for MODEL in "${MODELS_TO_BUILD[@]}"; do
     esac
 
     # Phase 1: Compile Kernel if needed
+    REF_CONF="$MODEL.config"
+    CONF_KEY="$SOC:$(md5sum "arch/arm64/configs/$REF_CONF" | cut -d' ' -f1)"
     SHOULD_COMPILE=false
-    if [[ "$SOC" == "exynos9820" && "$COMPILED_9820" == false ]]; then SHOULD_COMPILE=true; fi
-    if [[ "$SOC" == "exynos9825" && "$COMPILED_9825" == false ]]; then SHOULD_COMPILE=true; fi
+    if [ -z "${COMPILED_CONF[$CONF_KEY]}" ]; then SHOULD_COMPILE=true; fi
 
     MAKE_ARGS="LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out/$SOC LOCALVERSION=$BUILD_LOCALVERSION"
     if [ "$SHOULD_COMPILE" = true ]; then
-        echo "Compiling for $SOC..."
+        echo "Compiling for $SOC ($MODEL, config $REF_CONF)..."
         mkdir -p out/$SOC
-        [[ "$SOC" == "exynos9820" ]] && REF_CONF="beyond2lte.config" || REF_CONF="d2xks.config"
         make ${MAKE_ARGS} -j$CORES exynos9820_defconfig $REF_CONF $KSU_CONFIG $RECOVERY_CONFIG || abort
         make ${MAKE_ARGS} -j$CORES || abort
-        [[ "$SOC" == "exynos9820" ]] && COMPILED_9820=true || COMPILED_9825=true
+        COMPILED_CONF[$CONF_KEY]=true
     fi
 
     # Phase 2: Generate Images

@@ -97,6 +97,16 @@ Options:
 
 The first run downloads a prebuilt clang toolchain into `toolchain/`.
 
+Each model is configured with its own `arch/arm64/configs/<model>.config`
+fragment, because the fragments differ in symbols that must match the hardware.
+Do not collapse a whole SoC onto a single fragment: `CONFIG_TZDEV_DEPLOY_OLD_TZAR`
+is the clearest example. `drivers/misc/tzdev/Kconfig` says only `d2s` and `d1`
+need it, and `tz_deploy_tzar.c` `.incbin`s `startup_old.tzar` instead of
+`startup.tzar` when it is set. Building d2s with the d2xks fragment ships the
+wrong TrustZone image and the device hangs on the first screen. The kernel is
+still compiled once per distinct fragment, not once per model, so models that
+share a fragment reuse the previous build.
+
 ## Conventions
 
 - The defconfig files use CRLF line endings. When editing them
