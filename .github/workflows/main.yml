@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Override the version tag (e.g. v2.3.4). Leave empty to derive it from the bundled SUSFS release plus the commit count."
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -21,31 +26,57 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+          # The PATCH level is the commit count since susfs.h last changed,
+          # so the full history must be present.
+          fetch-depth: 0
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
           if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
           if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          echo "🔧 Using KernelSU-Next legacy-susfs-v230 from star-star-dev"
+          git clone https://github.com/star-star-dev/KernelSU-Next.git KernelSU-Next
+          cd KernelSU-Next
+          git fetch --all
+          git checkout origin/legacy-susfs-v230
+          cd ..
+          curl -LSs "https://raw.githubusercontent.com/star-star-dev/KernelSU-Next/legacy-susfs-v230/kernel/setup.sh" | bash -s origin/legacy-susfs-v230
+
+      - name: "🏷️Resolve package version"
+        run: |
+          chmod +x kernel-version.sh
+          # Fail early if the derived version does not track the bundled susfs.
+          ./kernel-version.sh check
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(./kernel-version.sh num)
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "Package version tag: $VER"
+
 
       - name: "🐎Build Unified Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Unified ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip "Star7KRNL-Original-Unified-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
       - name: "😎Upload Unified ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "ExtremeKRNL-Unified-Package"
+          name: "Star7KRNL-Unified-Package"
           path: ${{ github.workspace }}/upload/*.zip
 
   build-droidspaces:
@@ -65,14 +96,22 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+          # The PATCH level is the commit count since susfs.h last changed,
+          # so the full history must be present.
+          fetch-depth: 0
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
           if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
           if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          echo "🔧 Using KernelSU-Next legacy-susfs-v230 from star-star-dev"
+          git clone https://github.com/star-star-dev/KernelSU-Next.git KernelSU-Next
+          cd KernelSU-Next
+          git fetch --all
+          git checkout origin/legacy-susfs-v230
+          cd ..
+          curl -LSs "https://raw.githubusercontent.com/star-star-dev/KernelSU-Next/legacy-susfs-v230/kernel/setup.sh" | bash -s origin/legacy-susfs-v230
 
       - name: "🩹Apply compatible Droidspaces non-GKI patches"
         run: |
@@ -88,24 +127,43 @@ jobs:
           test -f kernel/cgroup/cgroup.c
           patch -p1 < "$PATCH_DIR/02.fix_restore cgroup file prefix handling .patch"
 
+      - name: "🏷️Resolve package version"
+        run: |
+          chmod +x kernel-version.sh
+          # Fail early if the derived version does not track the bundled susfs.
+          ./kernel-version.sh check
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(./kernel-version.sh num)
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "Package version tag: $VER"
+
       - name: "⚙️Enable Droidspaces configuration"
         run: |
-          sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          if ! grep -q 'droidspaces.config' build.sh; then
+            sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          fi
 
       - name: "🐎Build Droidspaces Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Droidspaces ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip "Star7KRNL-Droidspaces-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
       - name: "😎Upload Droidspaces ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "ExtremeKRNL-Droidspaces-non-GKI-Package"
+          name: "Star7KRNL-Droidspaces-Package"
           path: ${{ github.workspace }}/upload/*.zip
