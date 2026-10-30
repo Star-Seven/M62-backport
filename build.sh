@@ -17,6 +17,7 @@ Options:
     -m, --model [value]     Specify the model code (e.g. d2xks) or 'all'
     -k, --ksu [Y/n]         Include KernelSU
     -r, --recovery [y/N]    Compile kernel for an Android Recovery
+    -v, --version [value]   Package version tag (defaults to CONFIG_LOCALVERSION)
 EOF
 }
 
@@ -27,12 +28,17 @@ while [[ $# -gt 0 ]]; do
         --model|-m) SELECTED_MODEL="$2"; shift 2 ;;
         --ksu|-k) KSU_OPTION="$2"; shift 2 ;;
         --recovery|-r) RECOVERY_OPTION="$2"; shift 2 ;;
+        --version|-v) VERSION_OVERRIDE="$2"; shift 2 ;;
         *) unset_flags; exit 1 ;;
     esac
 done
 
-# For a unified package, we build all models
-MODELS_TO_BUILD=("${SUPPORTED_MODELS[@]}")
+# For a unified package, we build all models unless one was requested
+if [ -n "$SELECTED_MODEL" ] && [ "$SELECTED_MODEL" != "all" ]; then
+    MODELS_TO_BUILD=("$SELECTED_MODEL")
+else
+    MODELS_TO_BUILD=("${SUPPORTED_MODELS[@]}")
+fi
 
 echo "Preparing the build environment..."
 
@@ -54,15 +60,54 @@ if [ ! -f "$CLANG_DIR/bin/clang-20" ]; then
     popd > /dev/null
 fi
 
+# Cache object compilation when ccache is present. Every run starts from a clean
+# out/ directory, so without this each run pays for a full compile per SoC; the
+# per-model configs differ by only a few dozen lines, so a warm cache serves most
+# of those objects. Absent ccache, the build simply runs clang directly.
+CCACHE_CC=""
+if command -v ccache > /dev/null 2>&1; then
+    CCACHE_CC="ccache clang"
+    echo "ccache enabled: $(ccache --version | head -n1)"
+fi
+
 if [ -z $KSU_OPTION ]; then read -p "Include KernelSU (y/N): " KSU_OPTION; fi
 RECOVERY_CONFIG=""
 if [[ "$RECOVERY_OPTION" == "y" ]]; then RECOVERY_CONFIG="recovery.config"; KSU_OPTION="n"; fi
 KSU_CONFIG=""
 if [[ "$KSU_OPTION" == "y" ]]; then KSU_CONFIG="ksu.config"; fi
 
-# Track compiled platforms
-COMPILED_9820=false
-COMPILED_9825=false
+# Package version: explicit -v wins, else derive it from the tree
+if [ -n "$VERSION_OVERRIDE" ]; then
+    PKG_VERSION="$VERSION_OVERRIDE"
+else
+    PKG_VERSION=$(./kernel-version.sh get)
+fi
+if [ -z "$PKG_VERSION" ]; then
+    echo "Error: could not determine package version (empty -v and no derivation)."
+    exit 1
+fi
+# Drop a leading brand tag so the final name never doubles it.
+PKG_TAG="${PKG_VERSION#Star7KRNL-}"
+echo "Package version: $PKG_VERSION (tag: $PKG_TAG)"
+
+# Inject the version into uname -r at build time. CONFIG_LOCALVERSION holds only
+# the brand prefix ("-Star7KRNL-Quant"), so we append the version part alone;
+# appending the full branded string would duplicate the prefix. An explicit -v
+# is normalized the same way (with or without the brand/leading v).
+VER_PART="$PKG_VERSION"
+VER_PART="${VER_PART#Star7KRNL-Quant-}"
+VER_PART="${VER_PART#Star7KRNL-}"
+case "$VER_PART" in v*) ;; *) VER_PART="v$VER_PART" ;; esac
+BUILD_LOCALVERSION="-$VER_PART"
+
+# Per-SoC cache of the config fragment already compiled, so models that share a
+# fragment do not trigger a rebuild. Rebuilding for every model would be wasted
+# work, but using one fixed fragment for a whole SoC is wrong: the fragments
+# differ in symbols that must match the device (CONFIG_TZDEV_DEPLOY_OLD_TZAR
+# picks the TrustZone tzar the bootloader expects, and d2s/d1 need the old one).
+# Keying the cache on the fragment content keeps a single build per distinct
+# configuration.
+declare -A COMPILED_CONF=()
 
 # Directory for unified package output
 UNIFIED_OUT="build/out/unified"
@@ -84,18 +129,22 @@ for MODEL in "${MODELS_TO_BUILD[@]}"; do
     esac
 
     # Phase 1: Compile Kernel if needed
+    REF_CONF="$MODEL.config"
+    CONF_KEY="$SOC:$(md5sum "arch/arm64/configs/$REF_CONF" | cut -d' ' -f1)"
     SHOULD_COMPILE=false
-    if [[ "$SOC" == "exynos9820" && "$COMPILED_9820" == false ]]; then SHOULD_COMPILE=true; fi
-    if [[ "$SOC" == "exynos9825" && "$COMPILED_9825" == false ]]; then SHOULD_COMPILE=true; fi
+    if [ -z "${COMPILED_CONF[$CONF_KEY]}" ]; then SHOULD_COMPILE=true; fi
 
-    MAKE_ARGS="LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out/$SOC"
+    MAKE_ARGS=(LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out/$SOC LOCALVERSION=$BUILD_LOCALVERSION)
+    # CC must remain a single make argument, so it is appended to the array
+    # rather than embedded in a string that would word-split into "CC=ccache"
+    # and a stray "clang" target.
+    if [ -n "$CCACHE_CC" ]; then MAKE_ARGS+=("CC=$CCACHE_CC"); fi
     if [ "$SHOULD_COMPILE" = true ]; then
-        echo "Compiling for $SOC..."
+        echo "Compiling for $SOC ($MODEL, config $REF_CONF)..."
         mkdir -p out/$SOC
-        [[ "$SOC" == "exynos9820" ]] && REF_CONF="beyond2lte.config" || REF_CONF="d2xks.config"
-        make ${MAKE_ARGS} -j$CORES exynos9820_defconfig $REF_CONF $KSU_CONFIG $RECOVERY_CONFIG || abort
-        make ${MAKE_ARGS} -j$CORES || abort
-        [[ "$SOC" == "exynos9820" ]] && COMPILED_9820=true || COMPILED_9825=true
+        make "${MAKE_ARGS[@]}" -j$CORES exynos9820_defconfig $REF_CONF $KSU_CONFIG $RECOVERY_CONFIG || abort
+        make "${MAKE_ARGS[@]}" -j$CORES || abort
+        COMPILED_CONF[$CONF_KEY]=true
     fi
 
     # Phase 2: Generate Images
@@ -135,12 +184,12 @@ cp build/clone_header "$UNIFIED_OUT/"
 cp build/unxz "$UNIFIED_OUT/"
 # Use the update-binary from build/ as source if it exists, otherwise use a default
 if [ -f "build/update-binary" ]; then
-    cp build/update-binary "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
+    sed "s/@KSU_PKG_VERSION@/${PKG_TAG}/g" build/update-binary > "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
 else
     # Fallback: if user didn't provide update-binary in build/, we must ensure one exists.
     # But according to instructions, build/ is the source.
     echo "Warning: build/update-binary not found, using reference one."
-    cp META-INF/com/google/android/update-binary "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
+    sed "s/@KSU_PKG_VERSION@/${PKG_TAG}/g" META-INF/com/google/android/update-binary > "$UNIFIED_OUT/META-INF/com/google/android/update-binary"
 fi
 
 # IMPORTANT: build/updater-script is the source for Edify logic.
@@ -150,8 +199,9 @@ cp build/updater-script "$UNIFIED_OUT/META-INF/com/google/android/updater-script
 
 # Final ZIP
 DATE=`date +"%d-%m-%Y_%H-%M-%S"`
-version=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/exynos9820_defconfig | cut -d '"' -f 2 | sed 's/^.//')
-[[ "$KSU_OPTION" == "y" ]] && ZIP_NAME="${version}_Unified_KSU_${DATE}.zip" || ZIP_NAME="ExtremeKRNL_${version}_Unified_${DATE}.zip"
+# Drop a leading brand tag so the final name never doubles it.
+PKG_TAG="${PKG_VERSION#Star7KRNL-}"
+ZIP_NAME="Star7KRNL-${PKG_TAG}_Unified_KSU_${DATE}.zip"
 
 pushd "$UNIFIED_OUT" > /dev/null
 zip -r "../../$ZIP_NAME" . > /dev/null

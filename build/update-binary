@@ -2,6 +2,8 @@
 
 set -e
 
+KSU_PKG_VERSION="@KSU_PKG_VERSION@"
+
 ZIPFILE="$3"
 OUTFD="/proc/self/fd/$2"
 
@@ -59,7 +61,8 @@ abort() {
 
 ui_print " "
 ui_print "*****************************************************"
-ui_print "***         ExtremeKRNL Unified Installer         ***"
+ui_print "***           Star7KRNL Unified Installer         ***"
+ui_print "***             Version: $KSU_PKG_VERSION"
 ui_print "***        For Samsung Galaxy S10 & Note10        ***"
 ui_print "*****************************************************"
 ui_print " "
@@ -114,7 +117,8 @@ set_progress 0.9
 trap - EXIT
 ui_print " "
 ui_print "*****************************************************"
-ui_print "***            ExtremeKRNL  Installed             ***"
+ui_print "***            Star7KRNL  Installed               ***"
+ui_print "***             Version: $KSU_PKG_VERSION"
 ui_print "*****************************************************"
 ui_print " "
 set_progress 1
