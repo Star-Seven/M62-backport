@@ -2,11 +2,21 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Override the version tag (e.g. v2.3.4). Leave empty to derive it from the bundled SUSFS release plus the commit count."
+        required: false
+        default: ""
 
 jobs:
   build:
     name: Build Original Kernel
     runs-on: ubuntu-24.04
+    outputs:
+      # GITHUB_ENV does not cross job boundaries, so the release job needs the
+      # version as an explicit output.
+      pkg_tag: ${{ steps.version.outputs.pkg_tag }}
+      susfs_version: ${{ steps.version.outputs.susfs_version }}
     steps:
       - name: "⏰Set Time Zone to Beijing"
         run: |
@@ -17,39 +27,107 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git-core flex bison build-essential zip curl zlib1g-dev libc6-dev-i386 lib32z1-dev unzip xz-utils cpio
 
-      - name: "⭐Checkout repository with submodules"
+      - name: "🗑️Free up disk space"
+        run: |
+          # The kernel build is LTO-linked and the checkout keeps full history
+          # (fetch-depth: 0, needed for the PATCH count), which together exceed
+          # the runner's default free space. Drop the preinstalled toolchains
+          # this build never uses.
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      /usr/local/.ghcup /usr/share/swift /opt/az /usr/lib/mono
+          sudo apt-get clean
+          df -h /
+
+      - name: "⭐Checkout repository"
         uses: actions/checkout@v7
         with:
-          submodules: true
+          # KernelSU-Next is checked out from this same repository below, so
+          # the submodule is not needed here.
+          submodules: false
+          # The PATCH level is the commit count since the SUSFS_VERSION
+          # line last changed, so the full history must be present.
+          fetch-depth: 0
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "📦Cache the clang toolchain"
+        uses: actions/cache@v6
+        with:
+          # build.sh downloads this toolchain on every run. It is pinned to a
+          # specific clang revision, so the archive is immutable and can be
+          # reused until the revision in build.sh changes.
+          path: toolchain/clang-r547379
+          key: clang-r547379-${{ runner.os }}
+
+      - name: "⚡Cache compiled objects (ccache)"
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # The kernel tree is not part of the key: the compiler hashes the
+          # preprocessed source, so edits invalidate only what they affect and a
+          # stale cache can never produce a wrong binary.
+          key: ccache-${{ runner.os }}
+          max-size: 2G
+          # A cache hit here is the whole point, so always restore.
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
-          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
-          if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
+          rm -rf KernelSU drivers/KernelSU KernelSU-Next
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          # KernelSU-Next lives on the legacy-susfs-v230 branch of the public
+          # star-star-dev/KernelSU-Next repository. It is pinned by name rather
+          # than read from github.repository so the build works from any fork or
+          # mirror of this tree, none of which carry that branch. The repository
+          # is public, so the clone is anonymous.
+          git clone --branch legacy-susfs-v230 --single-branch \
+            "https://github.com/star-star-dev/KernelSU-Next.git" \
+            KernelSU-Next
+          bash KernelSU-Next/kernel/setup.sh origin/legacy-susfs-v230
+
+      - name: "🏷️Resolve package version"
+        id: version
+        run: |
+          chmod +x kernel-version.sh
+          # Fail early if the derived version does not track the bundled susfs.
+          ./kernel-version.sh check
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(./kernel-version.sh num)
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "pkg_tag=$VER" >> "$GITHUB_OUTPUT"
+          # Reported verbatim in the release notes so they cannot drift from the
+          # SUSFS release actually bundled into this build.
+          SUSFS_VER=$(sed -n 's/.*SUSFS_VERSION "\(.*\)".*/\1/p' include/linux/susfs.h | head -n1)
+          echo "susfs_version=$SUSFS_VER" >> "$GITHUB_OUTPUT"
+          echo "Package version tag: $VER (susfs $SUSFS_VER)"
+
 
       - name: "🐎Build Unified Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Unified ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip "Star7KRNL-Original-Unified-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
       - name: "😎Upload Unified ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "ExtremeKRNL-Unified-Package"
+          name: "Star7KRNL-Unified-Package"
           path: ${{ github.workspace }}/upload/*.zip
 
   build-droidspaces:
-    name: Build Droidspaces non-GKI Kernel
+    name: Build Droidspaces Kernel
     runs-on: ubuntu-24.04
     steps:
       - name: "⏰Set Time Zone to Beijing"
@@ -61,20 +139,64 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git-core flex bison build-essential zip curl patch zlib1g-dev libc6-dev-i386 lib32z1-dev unzip xz-utils cpio
 
-      - name: "⭐Checkout repository with submodules"
+      - name: "🗑️Free up disk space"
+        run: |
+          # The kernel build is LTO-linked and the checkout keeps full history
+          # (fetch-depth: 0, needed for the PATCH count), which together exceed
+          # the runner's default free space. Drop the preinstalled toolchains
+          # this build never uses.
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      /usr/local/.ghcup /usr/share/swift /opt/az /usr/lib/mono
+          sudo apt-get clean
+          df -h /
+
+      - name: "⭐Checkout repository"
         uses: actions/checkout@v7
         with:
-          submodules: true
+          # KernelSU-Next is checked out from this same repository below, so
+          # the submodule is not needed here.
+          submodules: false
+          # The PATCH level is the commit count since the SUSFS_VERSION
+          # line last changed, so the full history must be present.
+          fetch-depth: 0
 
-      - name: "💡 Setup KernelSU-Next"
+      - name: "📦Cache the clang toolchain"
+        uses: actions/cache@v6
+        with:
+          # build.sh downloads this toolchain on every run. It is pinned to a
+          # specific clang revision, so the archive is immutable and can be
+          # reused until the revision in build.sh changes.
+          path: toolchain/clang-r547379
+          key: clang-r547379-${{ runner.os }}
+
+      - name: "⚡Cache compiled objects (ccache)"
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # The kernel tree is not part of the key: the compiler hashes the
+          # preprocessed source, so edits invalidate only what they affect and a
+          # stale cache can never produce a wrong binary.
+          key: ccache-${{ runner.os }}
+          max-size: 2G
+          # A cache hit here is the whole point, so always restore.
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: "💡 Setup KernelSU-Next (legacy-susfs-v230)"
         run: |
-          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
-          if [ -d "./drivers/KernelSU" ]; then rm -rf "./drivers/KernelSU"; fi
+          rm -rf KernelSU drivers/KernelSU KernelSU-Next
 
-          echo "🔧 Using KernelSU-Next"
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          # KernelSU-Next lives on the legacy-susfs-v230 branch of the public
+          # star-star-dev/KernelSU-Next repository. It is pinned by name rather
+          # than read from github.repository so the build works from any fork or
+          # mirror of this tree, none of which carry that branch. The repository
+          # is public, so the clone is anonymous.
+          git clone --branch legacy-susfs-v230 --single-branch \
+            "https://github.com/star-star-dev/KernelSU-Next.git" \
+            KernelSU-Next
+          bash KernelSU-Next/kernel/setup.sh origin/legacy-susfs-v230
 
-      - name: "🩹Apply compatible Droidspaces non-GKI patches"
+      - name: "🩹Apply compatible Droidspaces patches"
         run: |
           git clone --depth=1 https://github.com/Star-Seven/Droidspaces-OSS.git droidspaces
           PATCH_DIR="droidspaces/Documentation/resources/kernel-patches/non-GKI"
@@ -88,24 +210,123 @@ jobs:
           test -f kernel/cgroup/cgroup.c
           patch -p1 < "$PATCH_DIR/02.fix_restore cgroup file prefix handling .patch"
 
+      - name: "🏷️Resolve package version"
+        run: |
+          chmod +x kernel-version.sh
+          # Fail early if the derived version does not track the bundled susfs.
+          ./kernel-version.sh check
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(./kernel-version.sh num)
+          fi
+          VER="${VER#Star7KRNL-}"
+          if [ -z "$VER" ]; then echo "Could not resolve a package version"; exit 1; fi
+          echo "PKG_TAG=$VER" >> "$GITHUB_ENV"
+          echo "Package version tag: $VER"
+
       - name: "⚙️Enable Droidspaces configuration"
         run: |
-          sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          if ! grep -q 'droidspaces.config' build.sh; then
+            sed -i 's/\$REF_CONF \$KSU_CONFIG \$RECOVERY_CONFIG/\$REF_CONF droidspaces.config \$KSU_CONFIG \$RECOVERY_CONFIG/' build.sh
+          fi
 
       - name: "🐎Build Droidspaces Kernel Package"
         run: |
           chmod +x build.sh
-          ./build.sh -m all -k y -r n
+          ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
       - name: "💫Prepare Droidspaces ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
+          cd ${{ github.workspace }}/upload/
+          mv *.zip "Star7KRNL-Droidspaces-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
       - name: "😎Upload Droidspaces ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "ExtremeKRNL-Droidspaces-non-GKI-Package"
+          name: "Star7KRNL-Droidspaces-Package"
           path: ${{ github.workspace }}/upload/*.zip
+
+  # Publishes both kernels to this repository's releases, tagged with the derived
+  # kernel version. Running inside the same repository means the default
+  # GITHUB_TOKEN is sufficient, so no extra secret is required.
+  release:
+    name: Publish Release
+    needs: [build, build-droidspaces]
+    runs-on: ubuntu-24.04
+    permissions:
+      # Declaring permissions sets every unlisted one to none, so actions: read
+      # must be listed explicitly for download-artifact to reach this run.
+      contents: write
+      actions: read
+    steps:
+      - name: "📥Download Unified Package"
+        uses: actions/download-artifact@v8
+        with:
+          name: "Star7KRNL-Unified-Package"
+          path: release-assets
+
+      - name: "📥Download Droidspaces Package"
+        uses: actions/download-artifact@v8
+        with:
+          name: "Star7KRNL-Droidspaces-Package"
+          path: release-assets
+
+      - name: "🏷️Resolve release tag"
+        run: |
+          TAG="${{ needs.build.outputs.pkg_tag }}"
+          if [ -z "$TAG" ]; then echo "The build job reported no package version"; exit 1; fi
+          echo "RELEASE_TAG=v${TAG#v}" >> "$GITHUB_ENV"
+          echo "Release tag: v${TAG#v}"
+          echo "=== Assets to publish ==="
+          ls -la release-assets
+
+      - name: "🚀Publish release"
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Star7KRNL-Quant-${{ env.RELEASE_TAG }}"
+          make_latest: true
+          body: |
+            ## Star7KRNL Quant ${{ env.RELEASE_TAG }}
+
+            **Build Information:**
+            - Kernel version: `${{ env.RELEASE_TAG }}`
+            - Commit SHA: `${{ github.sha }}`
+            - Bundled SUSFS: `${{ needs.build.outputs.susfs_version }}`
+            - KernelSU-Next: legacy (susfs-v230)
+
+            **Included Kernel Variants:**
+            1. **Star7KRNL-Original** - unified package, all supported devices
+            2. **Star7KRNL-Droidspaces** - Droidspaces-enabled variant
+
+            **Supported Devices:**
+            - Exynos 9820: beyond0lte (S10e), beyond1lte (S10), beyond2lte (S10+), beyondx (S10 5G)
+            - Exynos 9825: d1 (Note10), d1xks (Note10 Korean), d2s (Note10+), d2x (Note10+ 5G), d2xks (Note10+ 5G Korean)
+
+            **Installation Guide:**
+
+            **For Star7KRNL-Original kernels:**
+            1. Flash the kernel zip file for your device
+            2. Download and install the KernelSU-Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
+            3. **[Optional]** For SUSFS functionality, install the SUSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+
+            **For Star7KRNL-Droidspaces kernels:**
+            1. Flash the kernel zip file for your device
+            2. Download and install the KernelSU-Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
+            3. **[Optional]** For SUSFS functionality, install the SUSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
+            4. Install the Droidspaces app from: [Droidspaces Releases](https://github.com/ravindu644/Droidspaces-OSS/releases/latest)
+               Grant it root, open it, and let it install the backend. Reboot when it asks.
+               This kernel already carries the Droidspaces configuration and patches.
+            5. Open the **Containers** tab, tap **+**, then **Repository**. Pick a distribution, tap **Download**, then **Install**.
+            6. Tap **Start**, then open the **Panel** tab and tap **Terminal** to get a shell.
+
+            **Note:**
+            - Choose the variant that matches your setup
+            - Make sure to use the KernelSU-Next manager, not the original KernelSU manager
+            - The Droidspaces app is only needed with the Droidspaces kernel variant
+          files: release-assets/*.zip
