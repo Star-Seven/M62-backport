@@ -111,19 +111,19 @@ jobs:
           chmod +x build.sh
           ./build.sh -m all -k y -r n -v "$PKG_TAG"
 
-      - name: "💫Prepare Unified ZIP for upload"
+      - name: "💫Prepare Original ZIP for upload"
         run: |
           mkdir -p ${{ github.workspace }}/upload
           cp build/*.zip ${{ github.workspace }}/upload/
           cd ${{ github.workspace }}/upload/
-          mv *.zip "Star7KRNL-Original-Unified-${PKG_TAG}.zip"
+          mv *.zip "Star7KRNL-Original-${PKG_TAG}.zip"
           echo "=== Files in upload directory ==="
           ls -la ${{ github.workspace }}/upload/
 
-      - name: "😎Upload Unified ZIP as artifact"
+      - name: "😎Upload Original ZIP as artifact"
         uses: actions/upload-artifact@v7
         with:
-          name: "Star7KRNL-Unified-Package"
+          name: "Star7KRNL-Original-Package"
           path: ${{ github.workspace }}/upload/*.zip
 
   build-droidspaces:
@@ -264,10 +264,10 @@ jobs:
       contents: write
       actions: read
     steps:
-      - name: "📥Download Unified Package"
+      - name: "📥Download Original Package"
         uses: actions/download-artifact@v8
         with:
-          name: "Star7KRNL-Unified-Package"
+          name: "Star7KRNL-Original-Package"
           path: release-assets
 
       - name: "📥Download Droidspaces Package"
@@ -289,7 +289,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Star7KRNL-Quant-${{ env.RELEASE_TAG }}"
+          name: "Star7KRNL-Quant ${{ env.RELEASE_TAG }}"
           make_latest: true
           body: |
             ## Star7KRNL Quant ${{ env.RELEASE_TAG }}
@@ -301,8 +301,8 @@ jobs:
             - KernelSU-Next: legacy (susfs-v230)
 
             **Included Kernel Variants:**
-            1. **Star7KRNL-Original** - unified package, all supported devices
-            2. **Star7KRNL-Droidspaces** - Droidspaces-enabled variant
+            1. **Star7KRNL-Original** - standard kernel, one unified package for all supported devices
+            2. **Star7KRNL-Droidspaces** - same kernel plus the Droidspaces container runtime, one unified package for all supported devices
 
             **Supported Devices:**
             - Exynos 9820: beyond0lte (S10e), beyond1lte (S10), beyond2lte (S10+), beyondx (S10 5G)
