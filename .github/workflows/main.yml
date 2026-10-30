@@ -304,19 +304,19 @@ jobs:
             1. **Star7KRNL-Original** - standard kernel, one unified package for all supported devices
             2. **Star7KRNL-Droidspaces** - same kernel plus the Droidspaces container runtime, one unified package for all supported devices
 
-            **Supported Devices:**
+            **Supported Devices (one package covers all of them):**
             - Exynos 9820: beyond0lte (S10e), beyond1lte (S10), beyond2lte (S10+), beyondx (S10 5G)
             - Exynos 9825: d1 (Note10), d1xks (Note10 Korean), d2s (Note10+), d2x (Note10+ 5G), d2xks (Note10+ 5G Korean)
 
             **Installation Guide:**
 
             **For Star7KRNL-Original kernels:**
-            1. Flash the kernel zip file for your device
+            1. Flash the kernel zip file - one package covers every supported device listed above, so there is nothing to choose per model
             2. Download and install the KernelSU-Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
             3. **[Optional]** For SUSFS functionality, install the SUSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
 
             **For Star7KRNL-Droidspaces kernels:**
-            1. Flash the kernel zip file for your device
+            1. Flash the kernel zip file - one package covers every supported device listed above, so there is nothing to choose per model
             2. Download and install the KernelSU-Next Manager from: [KernelSU-Next Releases](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
             3. **[Optional]** For SUSFS functionality, install the SUSFS module from: [SuSFS Module Releases](https://github.com/sidex15/susfs4ksu-module/releases/latest)
             4. Install the Droidspaces app from: [Droidspaces Releases](https://github.com/ravindu644/Droidspaces-OSS/releases/latest)
