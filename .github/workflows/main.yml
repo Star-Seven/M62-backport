@@ -60,7 +60,7 @@ jobs:
           key: clang-r547379-${{ runner.os }}
 
       - name: "⚡Cache compiled objects (ccache)"
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           # The kernel tree is not part of the key: the compiler hashes the
           # preprocessed source, so edits invalidate only what they affect and a
@@ -172,7 +172,7 @@ jobs:
           key: clang-r547379-${{ runner.os }}
 
       - name: "⚡Cache compiled objects (ccache)"
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           # The kernel tree is not part of the key: the compiler hashes the
           # preprocessed source, so edits invalidate only what they affect and a
