@@ -413,8 +413,8 @@ static __always_inline void page_inc_lru_refs_fast(struct page *page)
 		return;
 	}
 
-	old_flags = READ_ONCE(page->flags);
 	do {
+		old_flags = READ_ONCE(page->flags);
 		if (lru_get_refs_flags(old_flags))
 			break;
 		new_flags = old_flags;

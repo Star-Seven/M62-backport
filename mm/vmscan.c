@@ -3163,8 +3163,8 @@ void lru_gen_inc_refs(struct page *page, unsigned int flags)
 
 	type = page_is_file_cache(page);
 retry:
-	old_flags = READ_ONCE(page->flags);
 	do {
+		old_flags = READ_ONCE(page->flags);
 		new_flags = old_flags;
 		old_gen = lru_get_gen_flags(old_flags);
 		old_refs = lru_get_refs_flags(old_flags);
@@ -3264,8 +3264,8 @@ bool page_reset_lru_refs(struct page *page)
 	struct pglist_data *pgdat;
 	bool reset = false;
 
-	old_flags = READ_ONCE(page->flags);
 	do {
+		old_flags = READ_ONCE(page->flags);
 		new_flags = old_flags;
 		refs = lru_get_refs_flags(old_flags);
 		type = !(old_flags & BIT(PG_swapbacked));
