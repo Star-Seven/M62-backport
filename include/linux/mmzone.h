@@ -269,25 +269,41 @@ struct zone_reclaim_stat {
 #define MAX_NR_GENS		4U
 
 /*
- * Each generation is divided into multiple tiers. Tiers represent different
- * ranges of numbers of accesses through file descriptors. A page accessed N
- * times through file descriptors is in tier order_base_2(N). A page in the
- * first tier (N=0,1) is marked by PG_referenced unless it was faulted in
- * though page tables or read ahead. A page in any other tier (N>1) is marked
- * by PG_referenced and PG_workingset.
+ * Each generation is divided into multiple tiers. A page's referenced
+ * (access) count maps to a tier as shown below:
  *
- * In contrast to moving across generations which requires the LRU lock, moving
- * across tiers only requires operations on page->flags and therefore has a
- * negligible cost in the buffered access path. In the eviction path,
- * comparisons of refaulted/(evicted+protected) from the first tier and the
- * rest infer whether pages accessed multiple times through file descriptors
- * are statistically hot and thus worth protecting.
+ *  Refs  Tier
+ *   0      0   - Mostly cold pages, readahead, etc.
+ *   1      0   = LRU_REFS_REFERENCED: used at least once.
+ *   2      1   = LRU_REFS_WORKINGSET: classical workingset, protected.
+ *   3      2   = LRU_REFS_PROTECTED: protected workingset, promotion cap.
+ *   4      2
+ *   5      3
+ *   6      3
+ *   7      3   = LRU_REFS_MAX: promotion candidate.
  *
- * MAX_NR_TIERS is set to 4 so that the multi-gen LRU can support twice of the
- * categories of the active/inactive LRU when keeping track of accesses through
- * file descriptors. It requires MAX_NR_TIERS-2 additional bits in page->flags.
+ * Pages are promoted proactively when their access count crosses a
+ * threshold, complementing the eviction-time PID protection. PG_referenced
+ * and PG_workingset are the low two bits of the count, and LRU_REFS_MASK
+ * holds the remaining high bits. A page is considered part of the
+ * workingset once it has been accessed at least twice, matching the
+ * classical LRU.
+ *
+ * MAX_NR_TIERS is set to 4 so that the multi-gen LRU can support twice the
+ * categories of the active/inactive LRU. The count needs LRU_REFS_WIDTH+2
+ * bits in page->flags.
  */
 #define MAX_NR_TIERS		4U
+#define LRU_TIER_MIN		0U
+#define LRU_TIER_MAX		(MAX_NR_TIERS - 1)
+
+/* access source flags for lru_gen_inc_refs() */
+#define LRU_REF_MAPPED		0x1U
+#define LRU_REF_EXEC		0x2U
+
+#define LRU_REFS_REFERENCED	0x1
+#define LRU_REFS_WORKINGSET	0x2
+#define LRU_REFS_PROTECTED	0x3
 
 #ifndef __GENERATING_BOUNDS_H
 
@@ -297,7 +313,8 @@ struct page_vma_mapped_walk;
 
 #define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
 #define LRU_REFS_MASK		((BIT(LRU_REFS_WIDTH) - 1) << LRU_REFS_PGOFF)
-#define LRU_REFS_FLAGS		(BIT(PG_referenced) | BIT(PG_workingset))
+#define LRU_REFS_FLAGS		(LRU_REFS_MASK | BIT(PG_referenced) | BIT(PG_workingset))
+#define LRU_REFS_MAX		(BIT(LRU_REFS_WIDTH + 2) - 1)
 
 #ifdef CONFIG_LRU_GEN
 

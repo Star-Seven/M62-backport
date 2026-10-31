@@ -677,6 +677,10 @@ void migrate_page_states(struct page *newpage, struct page *page)
 		SetPageUnevictable(newpage);
 	if (PageWorkingset(page))
 		SetPageWorkingset(newpage);
+#ifdef CONFIG_LRU_GEN
+	if (lru_gen_enabled())
+		page_set_lru_refs(newpage, page_lru_refs(page));
+#endif
 	if (PageChecked(page))
 		SetPageChecked(newpage);
 	if (PageMappedToDisk(page))

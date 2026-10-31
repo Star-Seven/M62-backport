@@ -114,17 +114,83 @@ static inline int lru_gen_from_seq(unsigned long seq)
 	return seq % MAX_NR_GENS;
 }
 
+static inline int lru_get_gen_flags(unsigned long flags)
+{
+	return ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+}
+
+static inline void lru_set_gen_flags(unsigned long *flags, int gen)
+{
+	*flags &= ~LRU_GEN_MASK;
+	*flags |= (gen + 1UL) << LRU_GEN_PGOFF;
+}
+
 static inline int lru_hist_from_seq(unsigned long seq)
 {
 	return seq % NR_HIST_GENS;
 }
 
-static inline int lru_tier_from_refs(int refs)
+static inline int lru_get_refs_flags(unsigned long flags)
 {
-	VM_BUG_ON(refs > BIT(LRU_REFS_WIDTH));
+	int refs = 0;
+
+	if (flags & BIT(PG_referenced))
+		refs |= BIT(0);
+	if (flags & BIT(PG_workingset))
+		refs |= BIT(1);
+	refs |= ((flags & LRU_REFS_MASK) >> LRU_REFS_PGOFF) << 2;
+
+	return refs;
+}
+
+static inline void lru_set_refs_flags(unsigned long *flags, unsigned int refs)
+{
+	VM_BUG_ON(refs > LRU_REFS_MAX);
+
+	*flags &= ~LRU_REFS_FLAGS;
+	if (refs & BIT(0))
+		*flags |= BIT(PG_referenced);
+	if (refs & BIT(1))
+		*flags |= BIT(PG_workingset);
+	*flags |= ((unsigned long)refs >> 2) << LRU_REFS_PGOFF;
+}
+
+static inline int page_lru_refs(struct page *page)
+{
+	return lru_get_refs_flags(READ_ONCE(page->flags));
+}
+
+static inline void page_set_lru_refs(struct page *page, unsigned int refs)
+{
+	unsigned long old_flags, new_flags;
+
+	do {
+		new_flags = old_flags = READ_ONCE(page->flags);
+		lru_set_refs_flags(&new_flags, refs);
+	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+}
+
+static inline int lru_tier_from_refs(unsigned int refs)
+{
+	VM_BUG_ON(refs > LRU_REFS_MAX);
 
 	/* see the comment on MAX_NR_TIERS */
-	return order_base_2(refs + 1);
+	if (refs < LRU_REFS_WORKINGSET)
+		return 0;
+	return fls(refs - 1);
+}
+
+static inline bool lru_gen_at_tail(struct lruvec *lruvec, int type, int gen)
+{
+	unsigned long min_seq = READ_ONCE(lruvec->lrugen.min_seq[type]);
+
+	/*
+	 * Consider a page at the tail of its LRU when it is within
+	 * MIN_NR_GENS of the oldest generation of its own type.
+	 */
+	BUILD_BUG_ON(MIN_NR_GENS != 2);
+	return gen == lru_gen_from_seq(min_seq) ||
+	       gen == lru_gen_from_seq(min_seq + 1);
 }
 
 static inline bool lru_gen_is_active(struct lruvec *lruvec, int gen)
@@ -186,6 +252,8 @@ static inline void lru_gen_update_size(struct lruvec *lruvec, struct page *page,
 static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bool reclaiming)
 {
 	int gen;
+	int refs = page_lru_refs(page);
+	unsigned long seq;
 	unsigned long old_flags, new_flags;
 	int type = page_is_file_cache(page);
 	int zone = page_zonenum(page);
@@ -193,22 +261,31 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 
 	if (PageUnevictable(page) || !lrugen->enabled)
 		return false;
+	seq = lrugen->max_seq;
 	/*
-	 * There are three common cases for this page:
-	 * 1. If it's hot, e.g., freshly faulted in or previously hot and
-	 *    migrated, add it to the youngest generation.
-	 * 2. If it's cold but can't be evicted immediately, i.e., an anon page
-	 *    not in swapcache or a dirty page pending writeback, add it to the
-	 *    second oldest generation.
-	 * 3. Everything else (clean, cold) is added to the oldest generation.
+	 * Frequency-guided placement:
+	 * 1. Active pages with more than one access start in the youngest
+	 *    generation; active pages accessed only once start one generation
+	 *    older, so that a single fault does not protect them forever.
+	 * 2. Reclaimable pages rotated back from writeback start in the oldest
+	 *    generation; anon pages not in swapcache and dirty pages pending
+	 *    writeback start in the second oldest generation.
+	 * 3. Other pages are placed according to whether they are part of the
+	 *    workingset (refs >= 2), i.e., second oldest or oldest.
 	 */
-	if (PageActive(page))
-		gen = lru_gen_from_seq(lrugen->max_seq);
-	else if ((type == LRU_GEN_ANON && !PageSwapCache(page)) ||
-		 (PageReclaim(page) && (PageDirty(page) || PageWriteback(page))))
-		gen = lru_gen_from_seq(lrugen->min_seq[type] + 1);
-	else
+	if (PageActive(page)) {
+		if (refs < LRU_REFS_WORKINGSET && seq > lrugen->min_seq[type])
+			seq--;
+		gen = lru_gen_from_seq(seq);
+	} else if (reclaiming) {
 		gen = lru_gen_from_seq(lrugen->min_seq[type]);
+	} else if ((type == LRU_GEN_ANON && !PageSwapCache(page)) ||
+		 (PageReclaim(page) && (PageDirty(page) || PageWriteback(page)))) {
+		gen = lru_gen_from_seq(lrugen->min_seq[type] + 1);
+	} else {
+		gen = lru_gen_from_seq(lrugen->min_seq[type] +
+				       (refs >= LRU_REFS_WORKINGSET));
+	}
 
 	do {
 		new_flags = old_flags = READ_ONCE(page->flags);
@@ -242,14 +319,12 @@ static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bo
 		VM_BUG_ON_PAGE(PageActive(page), page);
 		VM_BUG_ON_PAGE(PageUnevictable(page), page);
 
-		gen = ((new_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+		gen = lru_get_gen_flags(new_flags);
 
 		new_flags &= ~LRU_GEN_MASK;
-		if (!(new_flags & BIT(PG_referenced)))
-			new_flags &= ~(LRU_REFS_MASK | LRU_REFS_FLAGS);
-		/* for shrink_page_list() */
+		/* refs are access frequency history and survive isolation */
 		if (reclaiming)
-			new_flags &= ~(BIT(PG_referenced) | BIT(PG_reclaim));
+			new_flags &= ~(BIT(PG_reclaim) | BIT(PG_active));
 		else if (lru_gen_is_active(lruvec, gen))
 			new_flags |= BIT(PG_active);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
@@ -259,6 +334,8 @@ static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bo
 
 	return true;
 }
+
+void lru_gen_inc_refs(struct page *page, unsigned int flags);
 
 #else
 
@@ -280,6 +357,10 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bool reclaiming)
 {
 	return false;
+}
+
+static inline void lru_gen_inc_refs(struct page *page, unsigned int flags)
+{
 }
 
 #endif /* CONFIG_LRU_GEN */
