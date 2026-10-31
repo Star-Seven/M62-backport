@@ -20,6 +20,7 @@
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
+#include <linux/mm_inline.h>
 #include <linux/mman.h>
 #include <linux/pagemap.h>
 #include <linux/file.h>
@@ -1016,7 +1017,7 @@ static inline int wait_on_page_bit_common(wait_queue_head_t *q,
 	int ret = 0;
 
 	if (bit_nr == PG_locked &&
-	    !PageUptodate(page) && PageWorkingset(page)) {
+	    !PageUptodate(page) && page_test_workingset(page)) {
 		if (!PageSwapBacked(page))
 			delayacct_thrashing_start();
 		psi_memstall_enter(&pflags);

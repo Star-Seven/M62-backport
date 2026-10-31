@@ -301,7 +301,7 @@ void lru_gen_refault(struct page *page, void *shadow)
 			mod_lruvec_state(lruvec, WORKINGSET_ACTIVATE, delta);
 		}
 		/* Refault is also promotion, cap the refs like lru_gen_inc_refs */
-		page_set_lru_refs(page, min(refs, LRU_REFS_PROTECTED));
+		__page_set_lru_refs(page, min(refs, LRU_REFS_PROTECTED));
 	}
 
 	if (refs >= LRU_REFS_WORKINGSET)
@@ -339,7 +339,7 @@ void *workingset_eviction(struct address_space *mapping, struct page *page)
 	lruvec = mem_cgroup_lruvec(pgdat, memcg);
 	eviction = atomic_long_inc_return(&lruvec->inactive_age);
 	eviction >>= bucket_order;
-	return pack_shadow(memcgid, pgdat, eviction, PageWorkingset(page));
+	return pack_shadow(memcgid, pgdat, eviction, page_test_workingset(page));
 }
 
 /**
@@ -428,7 +428,7 @@ void workingset_refault(struct page *page, void *shadow)
 
 	/* Page was active prior to eviction */
 	if (workingset) {
-		SetPageWorkingset(page);
+		page_set_workingset(page);
 		inc_lruvec_state(lruvec, WORKINGSET_RESTORE);
 	}
 out:

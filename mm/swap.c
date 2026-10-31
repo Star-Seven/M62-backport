@@ -549,7 +549,10 @@ static void lru_deactivate_file_fn(struct page *page, struct lruvec *lruvec,
 
 	del_page_from_lru_list(page, lruvec);
 	ClearPageActive(page);
-	ClearPageReferenced(page);
+	if (lru_gen_enabled())
+		__page_set_lru_refs(page, 0);
+	else
+		ClearPageReferenced(page);
 
 	if (PageWriteback(page) || PageDirty(page)) {
 		/*
@@ -581,7 +584,10 @@ static void lru_lazyfree_fn(struct page *page, struct lruvec *lruvec,
 	    !PageSwapCache(page) && !PageUnevictable(page)) {
 		del_page_from_lru_list(page, lruvec);
 		ClearPageActive(page);
-		ClearPageReferenced(page);
+		if (lru_gen_enabled())
+			__page_set_lru_refs(page, 0);
+		else
+			ClearPageReferenced(page);
 		/*
 		 * lazyfree pages are clean anonymous pages. They have
 		 * SwapBacked flag cleared to distinguish normal anonymous

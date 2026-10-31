@@ -160,12 +160,21 @@ static inline int page_lru_refs(struct page *page)
 	return lru_get_refs_flags(READ_ONCE(page->flags));
 }
 
-static inline void page_set_lru_refs(struct page *page, unsigned int refs)
+/**
+ * __page_set_lru_refs - Set a page's LRU refs.
+ * @page: the page
+ * @refs: the new referenced count (0 .. LRU_REFS_MAX)
+ *
+ * Set the page's LRU refs.  The page must be off the LRU list (e.g.,
+ * isolated), or use lru_gen_inc_refs or page_reset_lru_refs instead.
+ */
+static inline void __page_set_lru_refs(struct page *page, unsigned int refs)
 {
 	unsigned long old_flags, new_flags;
 
 	do {
 		new_flags = old_flags = READ_ONCE(page->flags);
+		VM_WARN_ON_ONCE(lru_get_gen_flags(old_flags) != -1);
 		lru_set_refs_flags(&new_flags, refs);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 }
@@ -193,23 +202,18 @@ static inline bool lru_gen_at_tail(struct lruvec *lruvec, int type, int gen)
 	       gen == lru_gen_from_seq(min_seq + 1);
 }
 
-static inline bool lru_gen_is_active(struct lruvec *lruvec, int gen)
+static inline bool lru_refs_is_active(unsigned int refs)
 {
-	unsigned long max_seq = lruvec->lrugen.max_seq;
+	VM_BUG_ON(refs > LRU_REFS_MAX);
 
-	VM_BUG_ON(gen >= MAX_NR_GENS);
-
-	/* see the comment on MIN_NR_GENS */
-	return gen == lru_gen_from_seq(max_seq) || gen == lru_gen_from_seq(max_seq - 1);
+	return refs >= LRU_REFS_ACTIVATED;
 }
 
-static inline void lru_gen_update_size(struct lruvec *lruvec, struct page *page,
-				       int old_gen, int new_gen)
+static inline void lru_gen_update_size(struct lruvec *lruvec, int type,
+					struct page *page, int old_gen, int new_gen)
 {
-	int type = page_is_file_cache(page);
 	int zone = page_zonenum(page);
 	int delta = hpage_nr_pages(page);
-	enum lru_list lru = type * LRU_INACTIVE_FILE;
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 
 	VM_BUG_ON(old_gen != -1 && old_gen >= MAX_NR_GENS);
@@ -217,36 +221,11 @@ static inline void lru_gen_update_size(struct lruvec *lruvec, struct page *page,
 	VM_BUG_ON(old_gen == -1 && new_gen == -1);
 
 	if (old_gen >= 0)
-		WRITE_ONCE(lrugen->nr_pages[old_gen][type][zone],
-			   lrugen->nr_pages[old_gen][type][zone] - delta);
+		atomic_long_sub(delta, &lrugen->nr_pages[old_gen][type][zone]);
 	if (new_gen >= 0)
-		WRITE_ONCE(lrugen->nr_pages[new_gen][type][zone],
-			   lrugen->nr_pages[new_gen][type][zone] + delta);
+		atomic_long_add(delta, &lrugen->nr_pages[new_gen][type][zone]);
 
-	/* addition */
-	if (old_gen < 0) {
-		if (lru_gen_is_active(lruvec, new_gen))
-			lru += LRU_ACTIVE;
-		update_lru_size(lruvec, lru, zone, delta);
-		return;
-	}
-
-	/* deletion */
-	if (new_gen < 0) {
-		if (lru_gen_is_active(lruvec, old_gen))
-			lru += LRU_ACTIVE;
-		update_lru_size(lruvec, lru, zone, -delta);
-		return;
-	}
-
-	/* promotion */
-	if (!lru_gen_is_active(lruvec, old_gen) && lru_gen_is_active(lruvec, new_gen)) {
-		update_lru_size(lruvec, lru, zone, -delta);
-		update_lru_size(lruvec, lru + LRU_ACTIVE, zone, delta);
-	}
-
-	/* demotion requires isolation, e.g., lru_deactivate_fn() */
-	VM_BUG_ON(lru_gen_is_active(lruvec, old_gen) && !lru_gen_is_active(lruvec, new_gen));
+	/* active/inactive counters are maintained by the callers, via refs */
 }
 
 static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bool reclaiming)
@@ -256,6 +235,7 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 	unsigned long seq;
 	unsigned long old_flags, new_flags;
 	int type = page_is_file_cache(page);
+	enum lru_list lru = type * LRU_INACTIVE_FILE;
 	int zone = page_zonenum(page);
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 
@@ -296,7 +276,10 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 		new_flags |= (gen + 1UL) << LRU_GEN_PGOFF;
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 
-	lru_gen_update_size(lruvec, page, -1, gen);
+	lru_gen_update_size(lruvec, type, page, -1, gen);
+	if (lru_refs_is_active(refs))
+		lru += LRU_ACTIVE;
+	update_lru_size(lruvec, lru, zone, hpage_nr_pages(page));
 	/* for rotate_reclaimable_page() */
 	if (reclaiming)
 		list_add_tail(&page->lru, &lrugen->lists[gen][type][zone]);
@@ -309,7 +292,12 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bool reclaiming)
 {
 	int gen;
+	int refs = page_lru_refs(page);
 	unsigned long old_flags, new_flags;
+	int type = page_is_file_cache(page);
+	int zone = page_zonenum(page);
+	enum lru_list lru = type * LRU_INACTIVE_FILE;
+	unsigned long max_seq = READ_ONCE(lruvec->lrugen.max_seq);
 
 	do {
 		new_flags = old_flags = READ_ONCE(page->flags);
@@ -325,17 +313,21 @@ static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bo
 		/* refs are access frequency history and survive isolation */
 		if (reclaiming)
 			new_flags &= ~(BIT(PG_reclaim) | BIT(PG_active));
-		else if (lru_gen_is_active(lruvec, gen))
+		else if ((max_seq - gen) % MAX_NR_GENS < MIN_NR_GENS)
 			new_flags |= BIT(PG_active);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 
-	lru_gen_update_size(lruvec, page, gen, -1);
+	lru_gen_update_size(lruvec, type, page, gen, -1);
+	if (lru_refs_is_active(refs))
+		lru += LRU_ACTIVE;
+	update_lru_size(lruvec, lru, zone, -hpage_nr_pages(page));
 	list_del(&page->lru);
 
 	return true;
 }
 
 void lru_gen_inc_refs(struct page *page, unsigned int flags);
+bool page_reset_lru_refs(struct page *page);
 
 #else
 
@@ -363,7 +355,111 @@ static inline void lru_gen_inc_refs(struct page *page, unsigned int flags)
 {
 }
 
+static inline bool page_reset_lru_refs(struct page *page)
+{
+	return false;
+}
+
 #endif /* CONFIG_LRU_GEN */
+
+/**
+ * page_test_workingset - Test if a page is in the workingset.
+ * @page: the page
+ *
+ * A page is workingset when its LRU refs count reaches
+ * LRU_REFS_WORKINGSET.  Under the classical LRU the extra refs counter
+ * are always zero so this is just testing the PG_workingset bit.
+ * NOTE: page_set_workingset() must not be used under MGLRU, as the
+ * page refs are tracked by lru_gen_inc_refs() with rules.
+ *
+ * Return: true if the page is workingset.
+ */
+static __always_inline bool page_test_workingset(struct page *page)
+{
+#ifdef CONFIG_LRU_GEN
+	return page_lru_refs(page) >= LRU_REFS_WORKINGSET;
+#else
+	return test_bit(PG_workingset, &page->flags);
+#endif
+}
+
+/*
+ * For the classical LRU only: with MGLRU the PG_workingset bit is part of
+ * the page refs count maintained by lru_gen_inc_refs(), and a raw set
+ * would corrupt it.
+ */
+static __always_inline void page_set_workingset(struct page *page)
+{
+#ifdef CONFIG_LRU_GEN
+	VM_WARN_ON_ONCE(lru_gen_enabled());
+#endif
+	set_bit(PG_workingset, &page->flags);
+}
+
+/**
+ * page_inc_lru_refs_fast - Bump page refs count without promotion.
+ * @page: the page
+ *
+ * Raise refs from 0 to LRU_REFS_REFERENCED and leave hotter pages
+ * untouched. For the classical LRU, a plain PG_referenced set.
+ */
+static __always_inline void page_inc_lru_refs_fast(struct page *page)
+{
+#ifdef CONFIG_LRU_GEN
+	unsigned long new_flags, old_flags;
+
+	if (!lru_gen_enabled()) {
+		set_bit(PG_referenced, &page->flags);
+		return;
+	}
+
+	old_flags = READ_ONCE(page->flags);
+	do {
+		if (lru_get_refs_flags(old_flags))
+			break;
+		new_flags = old_flags;
+		lru_set_refs_flags(&new_flags, LRU_REFS_REFERENCED);
+	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+#else
+	set_bit(PG_referenced, &page->flags);
+#endif
+}
+
+/**
+ * page_check_lru_refs - Test if an LRU managed page has been referenced.
+ * @page: The page to test.
+ *
+ * Returns true if the MGLRU refs count is nonzero, or PG_referenced is set,
+ * which is also correct for the non-MGLRU case.  Kept as a separate helper,
+ * to avoid splattering the lru_gen_enabled() static key.
+ */
+static inline bool page_check_lru_refs(struct page *page)
+{
+#ifdef CONFIG_LRU_GEN
+	if (lru_gen_enabled())
+		return page_lru_refs(page) > 0;
+#endif
+	return test_bit(PG_referenced, &page->flags);
+}
+
+/**
+ * page_clear_lru_refs - Clear the referenced state of an LRU managed page.
+ * @page: The page to clear.
+ *
+ * Reset the MGLRU refs count to zero, or clear PG_referenced, leaving
+ * PG_workingset alone for the non-MGLRU case.  Kept as a separate helper
+ * just like page_check_lru_refs().
+ */
+static inline void page_clear_lru_refs(struct page *page)
+{
+#ifdef CONFIG_LRU_GEN
+	if (lru_gen_enabled()) {
+		__page_set_lru_refs(page, 0);
+		return;
+	}
+#endif
+	clear_bit(PG_referenced, &page->flags);
+}
 
 static __always_inline void add_page_to_lru_list(struct page *page,
 				struct lruvec *lruvec)

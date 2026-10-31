@@ -504,7 +504,7 @@ struct page *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			 * Initiate read into locked page and return.
 			 */
 			if (!lru_gen_enabled())
-				SetPageWorkingset(new_page);
+				page_set_workingset(new_page);
 			else if (shadow)
 				lru_gen_refault(new_page, shadow);
 			lru_cache_add_anon(new_page);

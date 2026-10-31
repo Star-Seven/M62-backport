@@ -17,6 +17,7 @@
  */
 #include <linux/mm.h>
 #include <linux/swap.h>
+#include <linux/mm_inline.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/uio.h>
@@ -879,7 +880,7 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
 
-	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
+	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(page_test_workingset(page)))
 		bio_set_flag(bio, BIO_WORKINGSET);
 }
 EXPORT_SYMBOL_GPL(__bio_add_page);
