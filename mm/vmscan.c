@@ -2414,7 +2414,7 @@ static inline bool mem_boost_pgdat_wmark(struct pglist_data *pgdat)
 }
 
 #define MEM_BOOST_THRESHOLD ((600 * 1024 * 1024) / (PAGE_SIZE))
-static inline bool need_memory_boosting(struct pglist_data *pgdat)
+bool need_memory_boosting(struct pglist_data *pgdat)
 {
 	bool ret;
 	unsigned long pgdatfile = node_page_state(pgdat, NR_ACTIVE_FILE) +
