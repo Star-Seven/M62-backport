@@ -3034,7 +3034,7 @@ static bool positive_ctrl_err(struct ctrl_pos *sp, struct ctrl_pos *pv)
 static int page_inc_gen(struct lruvec *lruvec, struct page *page, bool reclaiming)
 {
 	unsigned long old_flags, new_flags;
-	int refs;
+	int old_refs, refs;
 	int type = page_is_file_cache(page);
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 	int new_gen, old_gen = lru_gen_from_seq(lrugen->min_seq[type]);
@@ -3050,15 +3050,26 @@ static int page_inc_gen(struct lruvec *lruvec, struct page *page, bool reclaimin
 
 		new_gen = (old_gen + 1) % MAX_NR_GENS;
 
-		refs = lru_get_refs_flags(old_flags);
+		old_refs = lru_get_refs_flags(old_flags);
+		refs = min(old_refs, LRU_REFS_WORKINGSET);
 		lru_set_gen_flags(&new_flags, new_gen);
-		lru_set_refs_flags(&new_flags, min(refs, LRU_REFS_WORKINGSET));
+		lru_set_refs_flags(&new_flags, refs);
 		/* for end_page_writeback() */
 		if (reclaiming)
 			new_flags |= BIT(PG_reclaim);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 
 	lru_gen_update_size(lruvec, type, page, old_gen, new_gen);
+
+	/* Refs capped below PROTECTED: demote if previously active */
+	if (lru_refs_is_active(old_refs) != lru_refs_is_active(refs)) {
+		enum lru_list lru = type * LRU_INACTIVE_FILE;
+
+		update_lru_size(lruvec, lru + lru_refs_is_active(old_refs),
+				page_zonenum(page), -hpage_nr_pages(page));
+		update_lru_size(lruvec, lru + lru_refs_is_active(refs),
+				page_zonenum(page), hpage_nr_pages(page));
+	}
 
 	return new_gen;
 }

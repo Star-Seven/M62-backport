@@ -454,7 +454,7 @@ static inline void page_clear_lru_refs(struct page *page)
 {
 #ifdef CONFIG_LRU_GEN
 	if (lru_gen_enabled()) {
-		__page_set_lru_refs(page, 0);
+		page_reset_lru_refs(page);
 		return;
 	}
 #endif
