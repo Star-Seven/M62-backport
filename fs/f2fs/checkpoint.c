@@ -1161,7 +1161,7 @@ static bool __need_flush_quota(struct f2fs_sb_info *sbi)
 	if (!is_journalled_quota(sbi))
 		return false;
 
-	down_write(&sbi->quota_sem);
+	f2fs_down_write(&sbi->quota_sem);
 	if (is_sbi_flag_set(sbi, SBI_QUOTA_SKIP_FLUSH)) {
 		ret = false;
 	} else if (is_sbi_flag_set(sbi, SBI_QUOTA_NEED_REPAIR)) {
@@ -1172,7 +1172,7 @@ static bool __need_flush_quota(struct f2fs_sb_info *sbi)
 	} else if (get_pages(sbi, F2FS_DIRTY_QDATA)) {
 		ret = true;
 	}
-	up_write(&sbi->quota_sem);
+	f2fs_up_write(&sbi->quota_sem);
 	return ret;
 }
 
@@ -1253,12 +1253,12 @@ retry_flush_dents:
 	 * POR: we should ensure that there are no dirty node pages
 	 * until finishing nat/sit flush. inode->i_blocks can be updated.
 	 */
-	down_write(&sbi->node_change);
+	f2fs_down_write(&sbi->node_change);
 
 	if (get_pages(sbi, F2FS_DIRTY_IMETA)) {
 		sec_dbg_inc_cnt(dbg_entry, IMETA);
 		sec_dbg_start_jiffies(s_jiffies);
-		up_write(&sbi->node_change);
+		f2fs_up_write(&sbi->node_change);
 		f2fs_unlock_all(sbi);
 		err = f2fs_sync_inode_meta(sbi);
 		if (err)
@@ -1269,17 +1269,17 @@ retry_flush_dents:
 	}
 
 retry_flush_nodes:
-	down_write(&sbi->node_write);
+	f2fs_down_write(&sbi->node_write);
 
 	if (get_pages(sbi, F2FS_DIRTY_NODES)) {
 		sec_dbg_inc_cnt(dbg_entry, NODES);
 		sec_dbg_start_jiffies(s_jiffies);
-		up_write(&sbi->node_write);
+		f2fs_up_write(&sbi->node_write);
 		atomic_inc(&sbi->wb_sync_req[NODE]);
 		err = f2fs_sync_node_pages(sbi, &wbc, false, FS_CP_NODE_IO);
 		atomic_dec(&sbi->wb_sync_req[NODE]);
 		if (err) {
-			up_write(&sbi->node_change);
+			f2fs_up_write(&sbi->node_change);
 			f2fs_unlock_all(sbi);
 			goto out;
 		}
@@ -1294,7 +1294,7 @@ retry_flush_nodes:
 	 * dirty node blocks and some checkpoint values by block allocation.
 	 */
 	__prepare_cp_block(sbi);
-	up_write(&sbi->node_change);
+	f2fs_up_write(&sbi->node_change);
 out:
 #ifdef CONFIG_F2FS_SEC_BLOCK_OPERATIONS_DEBUG
 	dbg_entry.end_time = local_clock();
@@ -1319,7 +1319,7 @@ out:
 
 static void unblock_operations(struct f2fs_sb_info *sbi)
 {
-	up_write(&sbi->node_write);
+	f2fs_up_write(&sbi->node_write);
 	f2fs_unlock_all(sbi);
 }
 
@@ -1842,17 +1842,17 @@ static int __write_checkpoint_sync(struct f2fs_sb_info *sbi,
 	struct cp_control cpc = { .reason = CP_SYNC, };
 	int err;
 
-	if (!down_write_trylock(&sbi->gc_lock)) {
+	if (!f2fs_down_write_trylock(&sbi->gc_lock)) {
 		if (!wait_lock)
 			return -EBUSY;
 
-		down_write(&sbi->gc_lock);
+		f2fs_down_write(&sbi->gc_lock);
 	}
 
 	set_cmd_start_time(cmd);
 	err = f2fs_write_checkpoint(sbi, &cpc);
 	set_cmd_complete_time(cmd);
-	up_write(&sbi->gc_lock);
+	f2fs_up_write(&sbi->gc_lock);
 
 	return err;
 }
