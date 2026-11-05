@@ -2429,6 +2429,25 @@ static struct attribute_group vmscan_attr_group = {
 	.attrs = vmscan_attrs,
 	.name = "vmscan",
 };
+
+/*
+ * Android 17's lmkd reads and writes /sys/kernel/sec_mm/mem_boost_mode,
+ * which is where upstream Samsung registers these attributes
+ * (mm/sec_mm/sec_mm_sysfs.c on 6.6). This 4.14 OSRC tree exposes them only
+ * under /sys/kernel/mm/vmscan/, so the ROM gets ENOENT, never sets a boost
+ * mode and need_memory_boosting() stays false. Publish the same attributes
+ * at both paths; they share one state, so the two views stay consistent.
+ */
+static struct attribute *sec_mm_attrs[] = {
+	&mem_boost_mode_attr.attr,
+	&am_app_launch_attr.attr,
+	NULL,
+};
+
+static struct attribute_group sec_mm_attr_group = {
+	.attrs = sec_mm_attrs,
+	.name = "sec_mm",
+};
 #endif
 
 static inline bool mem_boost_pgdat_wmark(struct pglist_data *pgdat)
@@ -6934,6 +6953,8 @@ static int __init kswapd_init(void)
 #ifdef CONFIG_SYSFS
 	if (sysfs_create_group(mm_kobj, &vmscan_attr_group))
 		pr_err("vmscan: register sysfs failed\n");
+	if (sysfs_create_group(kernel_kobj, &sec_mm_attr_group))
+		pr_err("sec_mm: register sysfs failed\n");
 #endif
 	return 0;
 }
