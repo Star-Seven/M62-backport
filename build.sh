@@ -160,7 +160,7 @@ for MODEL in "${MODELS_TO_BUILD[@]}"; do
 
     ./toolchain/mkbootimg --base 0x10000000 --board $BOARD --cmdline 'loop.max_part=7' --hashtype sha1 \
         --header_version 1 --kernel out/$SOC/arch/arm64/boot/Image --kernel_offset 0x00008000 \
-        --os_patch_level 2026-05 --os_version 16.0.0 --pagesize 2048 \
+        --os_patch_level 2026-09 --os_version 17.0.0 --pagesize 2048 \
         --ramdisk $TEMP_OUT/ramdisk.cpio.gz --ramdisk_offset 0xF0000000 --second_offset 0xF0000000 \
         --tags_offset 0x00000100 -o $TEMP_OUT/$MODEL_NAME.img || abort
 
