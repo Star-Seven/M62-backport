@@ -754,6 +754,36 @@ extern void rto_push_irq_work_func(struct irq_work *work);
  * (such as the load balancing or the thread migration code), lock
  * acquire operations must be ordered by ascending &runqueue.
  */
+#ifdef CONFIG_UCLAMP_TASK
+/**
+ * struct uclamp_bucket - Utilization clamp bucket
+ * @value: utilization clamp value for tasks managed by this bucket
+ * @tasks: number of RUNNABLE tasks on this bucket
+ */
+struct uclamp_bucket {
+	unsigned long value;
+	unsigned int tasks;
+};
+
+/**
+ * struct uclamp_rq - rq's utilization clamp
+ * @value: currently active clamp values for a rq
+ * @bucket: utilization clamp buckets affecting a rq
+ */
+struct uclamp_rq {
+	unsigned int value;
+	struct uclamp_bucket bucket[UCLAMP_BUCKETS];
+};
+#endif /* CONFIG_UCLAMP_TASK */
+
+/* rq->uclamp_flags: idle state retains the last max clamp */
+#define UCLAMP_FLAG_IDLE	0x01
+
+#ifdef CONFIG_UCLAMP_TASK
+extern unsigned int uclamp_eff_value(struct task_struct *p,
+				     enum uclamp_id clamp_id);
+#endif
+
 struct rq {
 	/* runqueue lock: */
 	raw_spinlock_t lock;
@@ -914,6 +944,11 @@ struct rq {
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state *idle_state;
 	int idle_state_idx;
+#endif
+#ifdef CONFIG_UCLAMP_TASK
+	/* Utilization clamp values and buckets for RUNNABLE tasks */
+	struct uclamp_rq		uclamp[UCLAMP_CNT];
+	unsigned int			uclamp_flags;
 #endif
 };
 
@@ -1680,6 +1715,12 @@ struct sched_class {
 					      struct task_struct *task,
 					      u64 new_task_load);
 #endif
+#ifdef CONFIG_UCLAMP_TASK
+	/*
+	 * Set for the fair class: only CFS tasks carry utilization clamps.
+	 */
+	int uclamp_enabled;
+#endif
 };
 
 static inline void put_prev_task(struct rq *rq, struct task_struct *prev)
@@ -2371,3 +2412,63 @@ walt_task_in_cum_window_demand(struct rq *rq, struct task_struct *p)
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+#ifdef CONFIG_UCLAMP_TASK
+/**
+ * uclamp_util_with - clamp @util with @rq and @p effective uclamp values.
+ * @rq:		the rq to read the clamp values from.
+ * @util:	the utilization to clamp.
+ * @p:		the task whose clamp values are used; may be NULL.
+ *
+ * Clamp the passed utilization with the rq's clamp value and, when a task
+ * is given, its effective clamp. Only schedutil calls this, to raise or cap
+ * the frequency a task's hint asks for.
+ */
+static __always_inline unsigned int
+uclamp_util_with(struct rq *rq, unsigned int util, struct task_struct *p)
+{
+	unsigned int min_util = READ_ONCE(rq->uclamp[UCLAMP_MIN].value);
+	unsigned int max_util = READ_ONCE(rq->uclamp[UCLAMP_MAX].value);
+
+	if (p) {
+		min_util = max(min_util, uclamp_eff_value(p, UCLAMP_MIN));
+		max_util = max(max_util, uclamp_eff_value(p, UCLAMP_MAX));
+	}
+
+	/*
+	 * The minimum clamp can only raise the utilization, the maximum
+	 * clamp can only cap it, and the cap wins when the two cross.
+	 */
+	if (unlikely(min_util >= max_util))
+		return min_util;
+
+	return clamp(util, min_util, max_util);
+}
+
+/* Is the rq's utilization clamped by any task? */
+static inline bool uclamp_rq_is_idle(struct rq *rq)
+{
+	return rq->uclamp_flags == UCLAMP_FLAG_IDLE;
+}
+
+static inline unsigned int uclamp_util(struct rq *rq, unsigned int util)
+{
+	return uclamp_util_with(rq, util, NULL);
+}
+#else /* CONFIG_UCLAMP_TASK */
+static inline unsigned int
+uclamp_util_with(struct rq *rq, unsigned int util, struct task_struct *p)
+{
+	return util;
+}
+
+static inline bool uclamp_rq_is_idle(struct rq *rq)
+{
+	return false;
+}
+
+static inline unsigned int uclamp_util(struct rq *rq, unsigned int util)
+{
+	return util;
+}
+#endif /* CONFIG_UCLAMP_TASK */

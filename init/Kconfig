@@ -1085,6 +1085,21 @@ config SCHED_TUNE
 
 	  If unsure, say N.
 
+config UCLAMP_TASK
+	bool "Enable utilization clamping for RT/FAIR tasks"
+	depends on CPU_FREQ_GOV_SCHEDUTIL
+	help
+	  This feature enables the scheduler to track the clamped utilization
+	  of each CPU based on RUNNABLE tasks currently scheduled on that CPU.
+
+	  When this option is enabled, the user can specify a min and max
+	  CPU bandwidth which is allowed for each single task. The max
+	  bandwidth allows to always leave some space for the other tasks,
+	  while the min bandwidth allows to define a task that will always
+	  run at least at a given frequency.
+
+	  If unsure, say N.
+
 config SCHED_EMS
 	bool "Exynos Mobile Scheduler"
 	depends on SMP

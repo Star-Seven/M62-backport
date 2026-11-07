@@ -607,6 +607,32 @@ struct sched_rt_entity {
 #endif
 } __randomize_layout;
 
+/*
+ * Utilization clamp identifiers.
+ */
+enum uclamp_id {
+	UCLAMP_MIN = 0,			/* Minimum utilization */
+	UCLAMP_MAX,			/* Maximum utilization */
+	UCLAMP_CNT			/* Number of clamp identifiers */
+};
+
+/* Number of utilization clamp buckets; upstream exposes this as a config. */
+#define UCLAMP_BUCKETS			5
+
+#ifdef CONFIG_UCLAMP_TASK
+/*
+ * The utilization clamp of a task: the value requested by user space, and
+ * the value finally applied once task-group and system-default restrictions
+ * have been taken into account.
+ */
+struct uclamp_se {
+	unsigned int value;		/* Clamp value */
+	unsigned int bucket_id;		/* Bucket the value falls into */
+	unsigned int active;		/* Task is RUNNABLE and refcounted */
+	unsigned int user_defined;	/* Set from user space */
+};
+#endif /* CONFIG_UCLAMP_TASK */
+
 struct sched_dl_entity {
 	struct rb_node			rb_node;
 
@@ -767,6 +793,15 @@ struct task_struct {
 	struct task_group		*sched_task_group;
 #endif
 	struct sched_dl_entity		dl;
+
+#ifdef CONFIG_UCLAMP_TASK
+	/*
+	 * Clamp values requested for a task and the effective value, after
+	 * task-group and system-default restrictions have been applied.
+	 */
+	struct uclamp_se		uclamp_req[UCLAMP_CNT];
+	struct uclamp_se		uclamp[UCLAMP_CNT];
+#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* List of struct preempt_notifier: */

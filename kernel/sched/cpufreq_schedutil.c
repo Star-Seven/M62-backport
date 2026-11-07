@@ -363,6 +363,14 @@ static void sugov_get_util(unsigned long *util, unsigned long *max, int cpu)
 	part_cpu_active_ratio(util, max, cpu);
 #endif
 
+#ifdef CONFIG_UCLAMP_TASK
+	/*
+	 * Apply the utilization clamps last: a task's min clamp raises the
+	 * requested frequency even after the active-ratio scaling, which is
+	 * what Android's ADPF hints expect.
+	 */
+	*util = uclamp_util_with(cpu_rq(cpu), *util, NULL);
+#endif
 }
 
 static void sugov_set_iowait_boost(struct sugov_cpu *sg_cpu, u64 time,
