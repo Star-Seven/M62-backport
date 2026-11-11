@@ -4519,6 +4519,7 @@ static void init_min_max_mtime(struct f2fs_sb_info *sbi)
 			sit_i->min_mtime = mtime;
 	}
 	sit_i->max_mtime = get_mtime(sbi, false);
+	sit_i->dirty_max_mtime = 0;
 	up_write(&sit_i->sentry_lock);
 }
 

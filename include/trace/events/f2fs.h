@@ -127,7 +127,8 @@ TRACE_DEFINE_ENUM(CP_RESIZE);
 #define show_victim_policy(type)					\
 	__print_symbolic(type,						\
 		{ GC_GREEDY,	"Greedy" },				\
-		{ GC_CB,	"Cost-Benefit" })
+		{ GC_CB,	"Cost-Benefit" },			\
+		{ GC_AT,	"Age-threshold" })
 
 #define show_cpreason(type)						\
 	__print_flags(type, "|",					\

@@ -38,6 +38,7 @@ enum {
 	FAULT_INFO_TYPE,	/* struct f2fs_fault_info */
 #endif
 	RESERVED_BLOCKS,	/* struct f2fs_sb_info */
+	ATGC_INFO,		/* struct atgc_management */
 };
 
 #ifdef CONFIG_F2FS_SEC_BLOCK_OPERATIONS_DEBUG
@@ -79,6 +80,8 @@ static unsigned char *__struct_ptr(struct f2fs_sb_info *sbi, int struct_type)
 		return (unsigned char *)NM_I(sbi);
 	else if (struct_type == F2FS_SBI || struct_type == RESERVED_BLOCKS)
 		return (unsigned char *)sbi;
+	else if (struct_type == ATGC_INFO)
+		return (unsigned char *)&sbi->am;
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 	else if (struct_type == FAULT_INFO_RATE ||
 					struct_type == FAULT_INFO_TYPE)
@@ -728,6 +731,13 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
 
 	ui = (unsigned int *)(ptr + a->offset);
 
+	if (!strcmp(a->attr.name, "atgc_age_threshold")) {
+		unsigned long long *ull =
+				(unsigned long long *)(ptr + a->offset);
+
+		return sprintf(buf, "%llu\n", *ull);
+	}
+
 	return sprintf(buf, "%u\n", *ui);
 }
 
@@ -825,6 +835,21 @@ out:
 		return count;
 	}
 
+	if (!strcmp(a->attr.name, "atgc_candidate_ratio") ||
+			!strcmp(a->attr.name, "atgc_age_weight")) {
+		if (t > 100)
+			return -EINVAL;
+		*ui = (unsigned int)t;
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "atgc_age_threshold")) {
+		unsigned long long *ull = (unsigned long long *)ui;
+
+		*ull = t;
+		return count;
+	}
+
 	if (!strcmp(a->attr.name, "discard_granularity")) {
 		if (t == 0 || t > MAX_PLIST_NUM)
 			return -EINVAL;
@@ -861,7 +886,11 @@ out:
 			sbi->gc_mode = GC_IDLE_CB;
 		else if (t == GC_IDLE_GREEDY)
 			sbi->gc_mode = GC_IDLE_GREEDY;
-		else
+		else if (t == GC_IDLE_AT) {
+			if (!sbi->am.atgc_enabled)
+				return -EINVAL;
+			sbi->gc_mode = GC_IDLE_AT;
+		} else
 			sbi->gc_mode = GC_NORMAL;
 		return count;
 	}
@@ -1071,6 +1100,12 @@ F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, sec_fua_mode, s_sec_cond_fua_mode);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, sec_hqm_preserve, sec_hqm_preserve);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, data_io_flag, data_io_flag);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, node_io_flag, node_io_flag);
+
+/* For ATGC */
+F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_candidate_ratio, candidate_ratio);
+F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_candidate_count, max_candidate_count);
+F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_age_weight, age_weight);
+F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_age_threshold, age_threshold);
 F2FS_GENERAL_RO_ATTR(dirty_segments);
 F2FS_GENERAL_RO_ATTR(free_segments);
 F2FS_GENERAL_RO_ATTR(lifetime_write_kbytes);
@@ -1171,6 +1206,10 @@ static struct attribute *f2fs_attrs[] = {
 #endif
 	ATTR_LIST(data_io_flag),
 	ATTR_LIST(node_io_flag),
+	ATTR_LIST(atgc_candidate_ratio),
+	ATTR_LIST(atgc_candidate_count),
+	ATTR_LIST(atgc_age_weight),
+	ATTR_LIST(atgc_age_threshold),
 	ATTR_LIST(dirty_segments),
 	ATTR_LIST(free_segments),
 	ATTR_LIST(unusable),

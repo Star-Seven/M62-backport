@@ -123,6 +123,7 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define F2FS_MOUNT_RESERVE_ROOT		0x01000000
 #define F2FS_MOUNT_DISABLE_CHECKPOINT	0x02000000
 #define F2FS_MOUNT_NORECOVERY		0x04000000
+#define F2FS_MOUNT_ATGC			0x08000000
 
 #define F2FS_OPTION(sbi)	((sbi)->mount_opt)
 #define clear_opt(sbi, option)	(F2FS_OPTION(sbi).opt &= ~F2FS_MOUNT_##option)
@@ -1380,6 +1381,18 @@ struct inode_management {
 	unsigned long ino_num;			/* number of entries */
 };
 
+/* for GC_AT */
+struct atgc_management {
+	bool atgc_enabled;			/* ATGC is enabled or not */
+	struct rb_root_cached root;		/* root of victim rb-tree */
+	struct list_head victim_list;		/* linked with all victim entries */
+	unsigned int victim_count;		/* victim count in rb-tree */
+	unsigned int candidate_ratio;		/* candidate ratio */
+	unsigned int max_candidate_count;	/* max candidate count */
+	unsigned int age_weight;		/* age weight, vblock_weight = 100 - age_weight */
+	unsigned long long age_threshold;	/* age threshold */
+};
+
 /* For s_flag in struct f2fs_sb_info */
 enum {
 	SBI_IS_DIRTY,				/* dirty flag for checkpoint */
@@ -1412,6 +1425,7 @@ enum {
 	GC_NORMAL,
 	GC_IDLE_CB,
 	GC_IDLE_GREEDY,
+	GC_IDLE_AT,
 	GC_URGENT,
 };
 
@@ -1763,6 +1777,7 @@ struct f2fs_sb_info {
 						 * race between GC and GC or CP
 						 */
 	struct f2fs_gc_kthread	*gc_thread;	/* GC thread */
+	struct atgc_management am;		/* atgc management */
 	unsigned int cur_victim_sec;		/* current victim section num */
 	unsigned int gc_mode;			/* current GC state */
 	unsigned int next_victim_seg[2];	/* next segment in victim section */
@@ -3903,6 +3918,8 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync, bool background,
 			unsigned int segno);
 void f2fs_build_gc_manager(struct f2fs_sb_info *sbi);
 int f2fs_resize_fs(struct f2fs_sb_info *sbi, __u64 block_count);
+int __init f2fs_create_garbage_collection_cache(void);
+void f2fs_destroy_garbage_collection_cache(void);
 
 /*
  * recovery.c

@@ -142,10 +142,12 @@ enum {
  * In the victim_sel_policy->gc_mode, there are two gc, aka cleaning, modes.
  * GC_CB is based on cost-benefit algorithm.
  * GC_GREEDY is based on greedy algorithm.
+ * GC_AT is based on age-threshold algorithm.
  */
 enum {
 	GC_CB = 0,
 	GC_GREEDY,
+	GC_AT,
 	ALLOC_NEXT,
 	FLUSH_DEVICE,
 	MAX_GC_POLICY,
@@ -171,7 +173,9 @@ struct victim_sel_policy {
 	unsigned int offset;		/* last scanned bitmap offset */
 	unsigned int ofs_unit;		/* bitmap search unit */
 	unsigned int min_cost;		/* minimum cost */
+	unsigned long long oldest_age;	/* oldest age of segments having the same min cost */
 	unsigned int min_segno;		/* segment # having min. cost */
+	unsigned long long age_threshold;/* age threshold */
 };
 
 struct seg_entry {
@@ -237,6 +241,8 @@ struct sit_info {
 	unsigned long long mounted_time;	/* mount time */
 	unsigned long long min_mtime;		/* min. modification time */
 	unsigned long long max_mtime;		/* max. modification time */
+	unsigned long long dirty_min_mtime;	/* rerange candidates in GC_AT */
+	unsigned long long dirty_max_mtime;	/* rerange candidates in GC_AT */
 
 	unsigned int last_victim[MAX_GC_POLICY]; /* last victim segment # */
 };
