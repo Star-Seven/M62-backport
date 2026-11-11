@@ -30,6 +30,17 @@ config ZRAM_WRITEBACK
 
 	 See Documentation/blockdev/zram.txt for more information.
 
+config ZRAM_MULTI_COMP
+	bool "Enable multiple compression streams"
+	depends on ZRAM
+	help
+	  This feature allows to setup a list of compression algorithms
+	  for the device. A page can be compressed with a secondary
+	  algorithm to save more memory. Apart from the default
+	  algorithm, up to 3 secondary algorithms can be configured.
+
+	  See Documentation/blockdev/zram.txt for more information.
+
 config ZRAM_MEMORY_TRACKING
 	bool "Track zRam block status"
 	depends on ZRAM && DEBUG_FS
