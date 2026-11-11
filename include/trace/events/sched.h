@@ -1280,7 +1280,8 @@ TRACE_EVENT(sched_util_est_task,
 		__entry->pid			= tsk->pid;
 		__entry->cpu                    = task_cpu(tsk);
 		__entry->util_avg               = avg->util_avg;
-		__entry->est_enqueued           = avg->util_est.enqueued;
+		__entry->est_enqueued           = avg->util_est.enqueued &
+						  ~UTIL_AVG_UNCHANGED;
 		__entry->est_ewma               = avg->util_est.ewma;
 	),
 

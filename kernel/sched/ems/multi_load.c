@@ -184,7 +184,7 @@ unsigned long ml_cpu_util_ratio(int cpu, int sse)
 					/ capacity_orig_of_sse(cpu, sse);
 }
 
-#define UTIL_AVG_UNCHANGED 0x1
+#define ML_UTIL_AVG_UNCHANGED 0x1
 
 /*
  * ml_cpu_util_wake - cpu utilization except waking task
@@ -213,10 +213,10 @@ unsigned long ml_cpu_util_wake(int cpu, struct task_struct *p)
 		if (unlikely(task_on_rq_queued(p) || current == p)) {
 			if (p->sse) {
 				sse_util_est -= min_t(unsigned int, sse_util_est,
-						(_ml_task_util_est(p) | UTIL_AVG_UNCHANGED));
+						(_ml_task_util_est(p) | ML_UTIL_AVG_UNCHANGED));
 			} else {
 				uss_util_est -= min_t(unsigned int, uss_util_est,
-						(_ml_task_util_est(p) | UTIL_AVG_UNCHANGED));
+						(_ml_task_util_est(p) | ML_UTIL_AVG_UNCHANGED));
 			}
 		}
 
@@ -586,11 +586,11 @@ void cfs_se_util_change_multi_load(struct task_struct *p, struct sched_avg *avg)
 
 	/* Avoid store if the flag has been already set */
 	enqueued = avg->ml.util_est.enqueued;
-	if (!(enqueued & UTIL_AVG_UNCHANGED))
+	if (!(enqueued & ML_UTIL_AVG_UNCHANGED))
 		return;
 
 	/* Reset flag to report util_avg has been updated */
-	enqueued &= ~UTIL_AVG_UNCHANGED;
+	enqueued &= ~ML_UTIL_AVG_UNCHANGED;
 	WRITE_ONCE(avg->ml.util_est.enqueued, enqueued);
 }
 
@@ -612,7 +612,7 @@ void enqueue_multi_load(struct cfs_rq *cfs_rq,
 
 	/* Update root cfs_rq's estimated utilization */
 	enqueued  = cfs_rq_ue->enqueued;
-	enqueued += (_ml_task_util_est(p) | UTIL_AVG_UNCHANGED);
+	enqueued += (_ml_task_util_est(p) | ML_UTIL_AVG_UNCHANGED);
 	WRITE_ONCE(cfs_rq_ue->enqueued, enqueued);
 
 	/* Update plots for Task and CPU estimated utilization */
@@ -653,7 +653,7 @@ dequeue_multi_load(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep
 	if (cfs_rq->nr_running) {
 		ue.enqueued  = cfs_rq_ue->enqueued;
 		ue.enqueued -= min_t(unsigned int, ue.enqueued,
-				     (_ml_task_util_est(p) | UTIL_AVG_UNCHANGED));
+				     (_ml_task_util_est(p) | ML_UTIL_AVG_UNCHANGED));
 	}
 	WRITE_ONCE(cfs_rq_ue->enqueued, ue.enqueued);
 
@@ -675,14 +675,14 @@ dequeue_multi_load(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep
 	 * skip the util_est update.
 	 */
 	ue = p->se.avg.ml.util_est;
-	if (ue.enqueued & UTIL_AVG_UNCHANGED)
+	if (ue.enqueued & ML_UTIL_AVG_UNCHANGED)
 		return;
 
 	/*
 	 * Skip update of task's estimated utilization when its EWMA is
 	 * already ~1% close to its last activation value.
 	 */
-	ue.enqueued = (ml_task_util(p) | UTIL_AVG_UNCHANGED);
+	ue.enqueued = (ml_task_util(p) | ML_UTIL_AVG_UNCHANGED);
 	last_ewma_diff = ue.enqueued - ue.ewma;
 	if (within_margin(last_ewma_diff, capacity_orig_of(task_cpu(p)) / 100))
 		return;
