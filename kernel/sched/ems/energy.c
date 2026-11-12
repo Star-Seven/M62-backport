@@ -208,6 +208,8 @@ static int find_min_util_cpu(const struct cpumask *mask, struct task_struct *p)
 		unsigned long capacity_orig = capacity_orig_of(cpu);
 		unsigned long util = ml_task_attached_cpu_util(cpu, p);
 
+		util = max(util, ml_boosted_task_util(p));
+
 		/* Skip over-capacity cpu */
 		if (util >= capacity_orig)
 			continue;
@@ -325,7 +327,7 @@ int select_energy_cpu(struct task_struct *p, int prev_cpu, int sd_flag, int sync
 	 * with 0 utilization, so let them be placed according to the normal
 	 * strategy.
 	 */
-	if (!task_util(p))
+	if (!ml_task_util_est(p))
 		return -1;
 
 	if (sysctl_sched_sync_hint_enable && sync)

@@ -372,6 +372,18 @@ struct task_group {
 #endif
 
 	struct cfs_bandwidth cfs_bandwidth;
+
+#ifdef CONFIG_UCLAMP_TASK_GROUP
+	/* The two decimal precision [%] value requested from user-space */
+	unsigned int		uclamp_pct[UCLAMP_CNT];
+	/* Clamp values requested for a task group */
+	struct uclamp_se	uclamp_req[UCLAMP_CNT];
+	/* Effective clamp values used for a task group */
+	struct uclamp_se	uclamp[UCLAMP_CNT];
+	/* Latency-sensitive flag used for a task group */
+	unsigned int		latency_sensitive;
+#endif
+
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -2455,6 +2467,23 @@ static inline unsigned int uclamp_util(struct rq *rq, unsigned int util)
 {
 	return uclamp_util_with(rq, util, NULL);
 }
+
+#ifdef CONFIG_UCLAMP_TASK_GROUP
+static inline bool uclamp_latency_sensitive(struct task_struct *p)
+{
+	struct task_group *tg = task_group(p);
+
+	if (!tg || tg == &root_task_group || task_group_is_autogroup(tg))
+		return false;
+
+	return tg->latency_sensitive;
+}
+#else /* CONFIG_UCLAMP_TASK_GROUP */
+static inline bool uclamp_latency_sensitive(struct task_struct *p)
+{
+	return false;
+}
+#endif /* CONFIG_UCLAMP_TASK_GROUP */
 #else /* CONFIG_UCLAMP_TASK */
 static inline unsigned int
 uclamp_util_with(struct rq *rq, unsigned int util, struct task_struct *p)

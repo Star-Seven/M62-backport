@@ -24,6 +24,16 @@ static inline int get_sse(struct sched_entity *se)
 	return task_of(se)->sse;
 }
 
+static inline unsigned long ml_uclamp_util(struct task_struct *p,
+					  unsigned long util)
+{
+#ifdef CONFIG_UCLAMP_TASK
+	util = clamp(util, (unsigned long)uclamp_eff_value(p, UCLAMP_MIN),
+			  (unsigned long)uclamp_eff_value(p, UCLAMP_MAX));
+#endif
+	return util;
+}
+
 /*
  * ml_task_runnable - task runnable
  *
@@ -73,8 +83,13 @@ static unsigned long _ml_task_util_est(struct task_struct *p)
 
 unsigned long ml_task_util_est(struct task_struct *p)
 {
-	return schedtune_util_est_en(p) ? max(READ_ONCE(p->se.avg.ml.util_avg), _ml_task_util_est(p))
-					: ml_task_util(p);
+	unsigned long util;
+
+	util = schedtune_util_est_en(p) ?
+		max(READ_ONCE(p->se.avg.ml.util_avg), _ml_task_util_est(p)) :
+		ml_task_util(p);
+
+	return ml_uclamp_util(p, util);
 }
 
 /*
@@ -89,11 +104,11 @@ unsigned long ml_boosted_task_util(struct task_struct *p)
 	unsigned long capacity;
 
 	if (boost == 0)
-		return util;
+		return ml_uclamp_util(p, util);
 
 	capacity = capacity_orig_of_sse(task_cpu(p), p->sse);
 
-	return util + schedtune_margin(capacity, util, boost);
+	return ml_uclamp_util(p, util + schedtune_margin(capacity, util, boost));
 }
 
 /*
@@ -248,9 +263,9 @@ unsigned long ml_task_attached_cpu_util(int cpu, struct task_struct *p)
 
 	if (cpu != task_cpu(p)) {
 		if (p->sse)
-			sse_util += ml_task_util(p);
+			sse_util += ml_task_util_est(p);
 		else
-			uss_util += ml_task_util(p);
+			uss_util += ml_task_util_est(p);
 	}
 
 	if (sched_feat(UTIL_EST)) {

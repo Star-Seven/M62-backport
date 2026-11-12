@@ -125,7 +125,7 @@ static int select_idle_cpu(struct task_struct *p)
 
 int prefer_idle_cpu(struct task_struct *p)
 {
-	if (schedtune_prefer_idle(p) <= 0)
+	if (schedtune_prefer_idle(p) <= 0 && !uclamp_latency_sensitive(p))
 		return -1;
 
 	return select_idle_cpu(p);

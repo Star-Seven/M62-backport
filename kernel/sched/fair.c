@@ -3732,6 +3732,22 @@ static inline unsigned long task_util_est(struct task_struct *p)
 	return max(task_util(p), _task_util_est(p));
 }
 
+/*
+ * Utilization used for capacity and energy placement. Keep the raw PELT/WALT
+ * value when uclamp is disabled; otherwise apply the effective task clamps so
+ * a UClampMin request raises the estimated demand and UClampMax caps it.
+ */
+static inline unsigned long uclamp_task_util(struct task_struct *p)
+{
+#ifdef CONFIG_UCLAMP_TASK
+	return clamp(task_util_est(p),
+		     (unsigned long)uclamp_eff_value(p, UCLAMP_MIN),
+		     (unsigned long)uclamp_eff_value(p, UCLAMP_MAX));
+#else
+	return task_util_est(p);
+#endif
+}
+
 static inline void util_est_enqueue(struct cfs_rq *cfs_rq,
 				    struct task_struct *p)
 {
@@ -6831,7 +6847,15 @@ boosted_task_util(struct task_struct *task)
 
 	trace_sched_boost_task(task, util, margin);
 
-	return util + margin;
+	util += margin;
+
+#ifdef CONFIG_UCLAMP_TASK
+	util = clamp(util,
+		     (unsigned long)uclamp_eff_value(task, UCLAMP_MIN),
+		     (unsigned long)uclamp_eff_value(task, UCLAMP_MAX));
+#endif
+
+	return util;
 }
 
 static unsigned long cpu_util_without(int cpu, struct task_struct *p);
@@ -6943,9 +6967,9 @@ find_idlest_group(struct sched_domain *sd, struct task_struct *p,
 	/*
 	 * The cross-over point between using spare capacity or least load
 	 * is too conservative for high utilization tasks on partially
-	 * utilized systems if we require spare_capacity > task_util(p),
+	 * utilized systems if we require spare_capacity > uclamp_task_util(p),
 	 * so we allow for some task stuffing by using
-	 * spare_capacity > task_util(p)/2.
+	 * spare_capacity > uclamp_task_util(p)/2.
 	 *
 	 * Spare capacity can't be used for fork because the utilization has
 	 * not been set yet, we must first select a rq to compute the initial
@@ -6954,11 +6978,11 @@ find_idlest_group(struct sched_domain *sd, struct task_struct *p,
 	if (sd_flag & SD_BALANCE_FORK)
 		goto skip_spare;
 
-	if (this_spare > task_util(p) / 2 &&
+	if (this_spare > uclamp_task_util(p) / 2 &&
 	    imbalance_scale*this_spare > 100*most_spare)
 		return NULL;
 
-	if (most_spare > task_util(p) / 2)
+	if (most_spare > uclamp_task_util(p) / 2)
 		return most_spare_sg;
 
 skip_spare:
@@ -7440,7 +7464,7 @@ int find_best_target(struct task_struct *p, int *backup_cpu,
 			 * accounting. However, the blocked utilization may be zero.
 			 */
 			wake_util = cpu_util_without(i, p);
-			new_util = wake_util + task_util_est(p);
+			new_util = wake_util + uclamp_task_util(p);
 
 			/*
 			 * Ensure minimum capacity to grant the required boost.
@@ -7837,7 +7861,7 @@ struct energy_env *get_eenv(struct task_struct *p, int prev_cpu)
 	 * during energy calculation, but unboosted task
 	 * util for group utilization calculations
 	 */
-	eenv->util_delta = task_util_est(p);
+	eenv->util_delta = uclamp_task_util(p);
 	eenv->util_delta_boosted = boosted_task_util(p);
 
 	cpumask_and(&cpumask_possible_cpus, &p->cpus_allowed, cpu_online_mask);
@@ -7897,7 +7921,7 @@ static int find_energy_efficient_cpu(struct sched_domain *sd,
 			 * fit without making the CPU overutilized.
 			 */
 			spare = capacity_spare_without(cpu_iter, p);
-			if (spare * 1024 < capacity_margin * task_util_est(p))
+			if (spare * 1024 < capacity_margin * uclamp_task_util(p))
 				continue;
 
 			/* Add CPU candidate */
@@ -7918,7 +7942,8 @@ static int find_energy_efficient_cpu(struct sched_domain *sd,
 		 * all if(prefer_idle) blocks.
 		 */
 		prefer_idle = sched_feat(EAS_PREFER_IDLE) ?
-				(schedtune_prefer_idle(p) > 0) : 0;
+				(schedtune_prefer_idle(p) > 0 ||
+				 uclamp_latency_sensitive(p)) : 0;
 
 		eenv->max_cpu_count = EAS_CPU_BKP + 1;
 
@@ -7999,7 +8024,7 @@ static inline int wake_energy(struct task_struct *p, int prev_cpu,
 	 * the heuristics we use there in selecting candidate
 	 * CPUs.
 	 */
-	if (unlikely(!sched_feat(FIND_BEST_TARGET) && !task_util_est(p)))
+	if (unlikely(!sched_feat(FIND_BEST_TARGET) && !uclamp_task_util(p)))
 		return false;
 
 	if(!sched_feat(EAS_PREFER_IDLE)){
@@ -8007,7 +8032,8 @@ static inline int wake_energy(struct task_struct *p, int prev_cpu,
 		 * Force prefer-idle tasks into the slow path, this may not happen
 		 * if none of the sd flags matched.
 		 */
-		if (schedtune_prefer_idle(p) > 0 && !sync)
+		if ((schedtune_prefer_idle(p) > 0 ||
+		     uclamp_latency_sensitive(p)) && !sync)
 			return false;
 	}
 	return true;

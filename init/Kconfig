@@ -1100,6 +1100,22 @@ config UCLAMP_TASK
 
 	  If unsure, say N.
 
+config UCLAMP_TASK_GROUP
+	bool "Enable utilization clamping for task groups"
+	depends on CGROUP_SCHED
+	depends on UCLAMP_TASK
+	help
+	  This feature enables the scheduler to track the clamped utilization
+	  of each CPU based on RUNNABLE tasks in a task group.
+
+	  With this option, the user can specify a min and max CPU bandwidth
+	  which is allowed for each task group. The max bandwidth allows to
+	  always leave some space for the other tasks, while the min bandwidth
+	  allows to define a task group that will always run at least at a
+	  given frequency.
+
+	  If unsure, say N.
+
 config SCHED_EMS
 	bool "Exynos Mobile Scheduler"
 	depends on SMP
