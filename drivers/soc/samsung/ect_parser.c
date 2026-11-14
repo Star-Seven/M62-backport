@@ -2108,38 +2108,45 @@ static struct file_operations ops_all_dump = {
 static ssize_t create_binary_store(struct class *class,
 		struct class_attribute *attr, const char *buf, size_t size)
 {
+	struct ect_header *header = ect_header_info.block_handle;
 	char filename_buffer[512];
-	long pattern_fd;
-	mm_segment_t old_fs;
 	struct file *fp;
 	loff_t pos = 0;
-	int ret;
+	size_t length, written = 0;
+	ssize_t ret;
 
 	ret = sscanf(buf, "%511s", filename_buffer);
 	if (ret != 1)
 		return -EINVAL;
 
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-
-	pattern_fd = do_sys_open(AT_FDCWD, filename_buffer, O_WRONLY | O_CREAT | O_TRUNC | O_SYNC | O_NOFOLLOW, 0664);
-	if (pattern_fd < 0) {
-		pr_err("[ECT] : error to open file\n");
-		set_fs(old_fs);
+	/* The reserved area includes an unmapped guard page. Export the parsed
+	 * payload, not the reservation; reading ect_size panics in memcpy. */
+	if (!header || ect_early_vm.size <= PAGE_SIZE)
 		return -EINVAL;
-	}
+	length = header->total_size;
+	if (length < sizeof(*header) || length > ect_size ||
+	    length > get_vm_area_size(&ect_early_vm))
+		return -EINVAL;
 
-	fp = fget(pattern_fd);
-	if (fp) {
-		vfs_write(fp, (const char *)ect_address, ect_size, &pos);
-		vfs_fsync(fp, 0);
-		fput(fp);
-	} else {
-		pr_err("[ECT] : error to convert file\n");
+	fp = filp_open(filename_buffer,
+		O_WRONLY | O_CREAT | O_TRUNC | O_SYNC | O_NOFOLLOW, 0664);
+	if (IS_ERR(fp))
+		return PTR_ERR(fp);
+	while (written < length) {
+		ret = kernel_write(fp, (const char *)ect_address + written,
+			length - written, &pos);
+		if (ret <= 0) {
+			if (!ret)
+				ret = -EIO;
+			goto close;
+		}
+		written += ret;
 	}
-
-	get_close_on_exec(pattern_fd);
-	set_fs(old_fs);
+	ret = vfs_fsync(fp, 0);
+close:
+	filp_close(fp, NULL);
+	if (ret < 0)
+		return ret;
 
 	return size;
 }
